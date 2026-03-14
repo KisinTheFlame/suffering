@@ -71,3 +71,26 @@ def test_training_service_supports_xgb_regressor_end_to_end(tmp_path: Path) -> N
     assert summary["test_metrics"]["rmse"] is not None
     assert Path(summary["artifacts"]["model_path"]).name == "xgb_regressor.pkl"
     assert Path(summary["artifacts"]["metrics_path"]).name == "xgb_regressor_metrics.json"
+
+
+def test_training_service_supports_xgb_ranker_end_to_end(tmp_path: Path) -> None:
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        artifacts_dir=tmp_path / "artifacts",
+        default_symbols=["AAPL", "MSFT", "NVDA", "META"],
+        xgb_ranker_n_estimators=12,
+    )
+    dataset_frame = build_panel_dataset()
+    ranking_storage = RankingStorage.from_settings(settings)
+    ranking_storage.write_daily_dataset(settings.default_dataset_name, dataset_frame)
+
+    service = TrainingService.from_settings(settings)
+    summary = service.train_baseline(model_name="xgb_ranker")
+
+    assert summary["model_name"] == "xgb_ranker"
+    assert summary["task_type"] == "ranking"
+    assert summary["training_label_column"] == "relevance_5d_5q"
+    assert summary["validation_metrics"]["mae"] is None
+    assert summary["test_metrics"]["ndcg_at_5_mean"] is not None
+    assert Path(summary["artifacts"]["model_path"]).name == "xgb_ranker.pkl"
+    assert Path(summary["artifacts"]["metrics_path"]).name == "xgb_ranker_metrics.json"

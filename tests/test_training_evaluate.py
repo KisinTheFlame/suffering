@@ -19,6 +19,7 @@ def test_evaluate_predictions_returns_expected_metric_fields() -> None:
             ),
             "symbol": ["AAPL", "MSFT", "NVDA", "AAPL", "MSFT", "NVDA"],
             "future_return_5d": [0.05, 0.01, -0.02, 0.03, 0.02, -0.01],
+            "relevance_5d_5q": [4, 3, 0, 4, 2, 1],
             PREDICTION_COLUMN: [0.04, 0.02, -0.01, 0.025, 0.015, -0.02],
         }
     )
@@ -33,12 +34,14 @@ def test_evaluate_predictions_returns_expected_metric_fields() -> None:
         "daily_rank_ic_std",
         "top_5_mean_future_return",
         "top_10_mean_future_return",
+        "ndcg_at_5_mean",
     }
     assert metrics["mae"] is not None
     assert metrics["rmse"] is not None
     assert metrics["daily_rank_ic_mean"] is not None
     assert metrics["top_5_mean_future_return"] is not None
     assert metrics["top_10_mean_future_return"] is not None
+    assert metrics["ndcg_at_5_mean"] is not None
 
 
 def test_evaluate_predictions_is_robust_on_tiny_daily_cross_sections() -> None:
@@ -47,6 +50,7 @@ def test_evaluate_predictions_is_robust_on_tiny_daily_cross_sections() -> None:
             "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
             "symbol": ["AAPL", "AAPL"],
             "future_return_5d": [0.01, 0.02],
+            "relevance_5d_5q": [1, 1],
             PREDICTION_COLUMN: [0.015, 0.018],
         }
     )
@@ -57,3 +61,4 @@ def test_evaluate_predictions_is_robust_on_tiny_daily_cross_sections() -> None:
     assert metrics["rmse"] is not None
     assert metrics["daily_rank_ic_mean"] is None
     assert metrics["daily_rank_ic_std"] is None
+    assert metrics["ndcg_at_5_mean"] is not None

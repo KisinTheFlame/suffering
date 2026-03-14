@@ -76,3 +76,8 @@ def test_training_storage_writes_and_reads_artifacts(tmp_path: Path) -> None:
     assert storage.walkforward_summary_path("hist_gbr") != storage.walkforward_summary_path(
         "xgb_regressor"
     )
+    assert storage.model_path("xgb_regressor") != storage.model_path("xgb_ranker")
+    assert storage.prediction_path("xgb_regressor", "test") != storage.prediction_path(
+        "xgb_ranker",
+        "test",
+    )

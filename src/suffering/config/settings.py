@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     xgb_learning_rate: float = 0.05
     xgb_subsample: float = 0.8
     xgb_colsample_bytree: float = 0.8
+    xgb_ranker_n_estimators: int = 100
+    xgb_ranker_max_depth: int = 4
+    xgb_ranker_learning_rate: float = 0.05
+    xgb_ranker_subsample: float = 0.8
+    xgb_ranker_colsample_bytree: float = 0.8
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -55,6 +60,9 @@ class Settings(BaseSettings):
         "xgb_learning_rate",
         "xgb_subsample",
         "xgb_colsample_bytree",
+        "xgb_ranker_learning_rate",
+        "xgb_ranker_subsample",
+        "xgb_ranker_colsample_bytree",
     )
     @classmethod
     def validate_ratio_range(cls, value: float) -> float:
@@ -69,7 +77,12 @@ class Settings(BaseSettings):
             raise ValueError("walkforward_min_folds must be at least 1")
         return value
 
-    @field_validator("xgb_n_estimators", "xgb_max_depth")
+    @field_validator(
+        "xgb_n_estimators",
+        "xgb_max_depth",
+        "xgb_ranker_n_estimators",
+        "xgb_ranker_max_depth",
+    )
     @classmethod
     def validate_positive_int(cls, value: int) -> int:
         if value < 1:

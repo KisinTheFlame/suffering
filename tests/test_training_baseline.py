@@ -53,6 +53,7 @@ def test_baseline_training_uses_only_numeric_feature_columns_and_predicts() -> N
     assert result.feature_columns == ["feature_alpha", "feature_beta"]
     assert len(result.validation_predictions) == len(split.validation_frame)
     assert len(result.test_predictions) == len(split.test_frame)
+    assert "relevance_5d_5q" in result.validation_predictions.columns
     assert PREDICTION_COLUMN in result.validation_predictions.columns
     assert PREDICTION_COLUMN in result.test_predictions.columns
 
@@ -79,5 +80,6 @@ def test_train_baseline_regressor_supports_multiple_models(model_name: str) -> N
     assert result.feature_columns == ["feature_alpha", "feature_beta"]
     assert len(result.validation_predictions) == len(split.validation_frame)
     assert len(result.test_predictions) == len(split.test_frame)
+    assert "relevance_5d_5q" in result.test_predictions.columns
     assert PREDICTION_COLUMN in result.validation_predictions.columns
     assert PREDICTION_COLUMN in result.test_predictions.columns

@@ -22,4 +22,4 @@ def test_cli_main_can_be_called(capsys) -> None:
 
     assert exit_code == 0
     assert "project: suffering" in captured.out
-    assert "hist_gbr/xgb_regressor training" in captured.out
+    assert "hist_gbr/xgb_regressor/xgb_ranker training" in captured.out

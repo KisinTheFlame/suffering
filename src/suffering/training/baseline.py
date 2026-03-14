@@ -97,6 +97,10 @@ def build_prediction_frame(
     model: Any,
     feature_columns: list[str],
 ) -> pd.DataFrame:
-    prediction_frame = frame.loc[:, [DATE_COLUMN, SYMBOL_COLUMN, FUTURE_RETURN_5D_COLUMN]].copy()
+    prediction_columns = [DATE_COLUMN, SYMBOL_COLUMN, FUTURE_RETURN_5D_COLUMN]
+    if RELEVANCE_5D_5Q_COLUMN in frame.columns:
+        prediction_columns.append(RELEVANCE_5D_5Q_COLUMN)
+
+    prediction_frame = frame.loc[:, prediction_columns].copy()
     prediction_frame[PREDICTION_COLUMN] = model.predict(frame.loc[:, feature_columns])
     return prediction_frame

@@ -154,6 +154,35 @@ def test_run_walkforward_training_supports_xgb_regressor() -> None:
     assert len(result.combined_test_predictions) == 4 * 2 * 4
 
 
+def test_run_walkforward_training_supports_xgb_ranker() -> None:
+    frame = build_panel_dataset(date_count=12)
+
+    result = run_walkforward_training(
+        frame=frame,
+        validation_ratio=0.2,
+        test_ratio=0.2,
+        step_ratio=0.2,
+        model_name="xgb_ranker",
+        settings=Settings(xgb_ranker_n_estimators=12),
+        random_state=7,
+    )
+
+    assert result.task_type == "ranking"
+    assert result.feature_columns == ["feature_alpha", "feature_beta"]
+    assert len(result.fold_results) == 4
+    assert result.test_metrics_summary["ndcg_at_5_mean"]["mean"] is not None
+    assert list(result.combined_test_predictions.columns) == [
+        "fold_id",
+        "date",
+        "symbol",
+        "future_return_5d",
+        "relevance_5d_5q",
+        "score_pred",
+        "model_name",
+    ]
+    assert result.combined_test_predictions["fold_id"].nunique() == 4
+
+
 def test_training_service_runs_xgb_walkforward_end_to_end(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path / "data",
@@ -175,3 +204,27 @@ def test_training_service_runs_xgb_walkforward_end_to_end(tmp_path: Path) -> Non
         == "xgb_regressor_walkforward_summary.json"
     )
     assert summary["test_metrics_summary"]["mae"]["mean"] is not None
+
+
+def test_training_service_runs_xgb_ranker_walkforward_end_to_end(tmp_path: Path) -> None:
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        artifacts_dir=tmp_path / "artifacts",
+        default_symbols=["AAPL", "MSFT", "NVDA", "META"],
+        xgb_ranker_n_estimators=12,
+    )
+    dataset_frame = build_panel_dataset(date_count=12)
+    ranking_storage = RankingStorage.from_settings(settings)
+    ranking_storage.write_daily_dataset(settings.default_dataset_name, dataset_frame)
+
+    service = TrainingService.from_settings(settings)
+    summary = service.train_walkforward(model_name="xgb_ranker")
+
+    assert summary["model_name"] == "xgb_ranker"
+    assert summary["task_type"] == "ranking"
+    assert summary["fold_count"] == 4
+    assert (
+        Path(summary["artifacts"]["summary_path"]).name
+        == "xgb_ranker_walkforward_summary.json"
+    )
+    assert summary["test_metrics_summary"]["ndcg_at_5_mean"]["mean"] is not None

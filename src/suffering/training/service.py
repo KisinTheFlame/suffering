@@ -10,9 +10,11 @@ from suffering.config.settings import Settings, get_settings
 from suffering.data.models import DATE_COLUMN
 from suffering.ranking import RankingService, build_ranking_service
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
+from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
 from suffering.training.baseline import train_baseline_regressor
 from suffering.training.evaluate import evaluate_predictions
-from suffering.training.models import resolve_model_name
+from suffering.training.models import resolve_model_name, resolve_model_task
+from suffering.training.ranking import SCORE_PREDICTION_COLUMN, train_ranker
 from suffering.training.splits import build_frame_date_summary, split_panel_dataset_by_date
 from suffering.training.storage import TrainingStorage
 from suffering.training.walkforward import run_walkforward_training
@@ -45,6 +47,7 @@ class TrainingService:
     ) -> dict[str, Any]:
         resolved_dataset_name = dataset_name or self.settings.default_dataset_name
         resolved_model_name = resolve_model_name(model_name=model_name, settings=self.settings)
+        task_type = resolve_model_task(model_name=resolved_model_name, settings=self.settings)
         dataset_frame = self.ranking_service.read_panel_dataset(dataset_name=resolved_dataset_name)
 
         split = split_panel_dataset_by_date(
@@ -53,17 +56,38 @@ class TrainingService:
             validation_ratio=self.settings.default_validation_ratio,
             test_ratio=self.settings.default_test_ratio,
         )
-        training_result = train_baseline_regressor(
-            train_frame=split.train_frame,
-            validation_frame=split.validation_frame,
-            test_frame=split.test_frame,
-            model_name=resolved_model_name,
-            settings=self.settings,
-            random_state=self.settings.random_seed,
-        )
-
-        validation_metrics = evaluate_predictions(training_result.validation_predictions)
-        test_metrics = evaluate_predictions(training_result.test_predictions)
+        if task_type == "ranking":
+            training_result = train_ranker(
+                train_frame=split.train_frame,
+                validation_frame=split.validation_frame,
+                test_frame=split.test_frame,
+                model_name=resolved_model_name,
+                settings=self.settings,
+                random_state=self.settings.random_seed,
+            )
+            validation_metrics = evaluate_predictions(
+                training_result.validation_predictions,
+                prediction_column=SCORE_PREDICTION_COLUMN,
+                include_error_metrics=False,
+            )
+            test_metrics = evaluate_predictions(
+                training_result.test_predictions,
+                prediction_column=SCORE_PREDICTION_COLUMN,
+                include_error_metrics=False,
+            )
+            training_label_column = RELEVANCE_5D_5Q_COLUMN
+        else:
+            training_result = train_baseline_regressor(
+                train_frame=split.train_frame,
+                validation_frame=split.validation_frame,
+                test_frame=split.test_frame,
+                model_name=resolved_model_name,
+                settings=self.settings,
+                random_state=self.settings.random_seed,
+            )
+            validation_metrics = evaluate_predictions(training_result.validation_predictions)
+            test_metrics = evaluate_predictions(training_result.test_predictions)
+            training_label_column = FUTURE_RETURN_5D_COLUMN
         split_summary = {
             "train": build_frame_date_summary(split.train_frame),
             "validation": build_frame_date_summary(split.validation_frame),
@@ -76,7 +100,10 @@ class TrainingService:
             {
                 "dataset_name": resolved_dataset_name,
                 "model_name": resolved_model_name,
-                "target_column": FUTURE_RETURN_5D_COLUMN,
+                "task_type": task_type,
+                "target_column": training_label_column,
+                "training_label_column": training_label_column,
+                "evaluation_return_column": FUTURE_RETURN_5D_COLUMN,
                 "feature_columns": training_result.feature_columns,
                 "feature_count": len(training_result.feature_columns),
                 "total_rows": int(len(dataset_frame)),
@@ -99,6 +126,9 @@ class TrainingService:
         return {
             "dataset_name": resolved_dataset_name,
             "model_name": resolved_model_name,
+            "task_type": task_type,
+            "training_label_column": training_label_column,
+            "evaluation_return_column": FUTURE_RETURN_5D_COLUMN,
             "total_rows": int(len(dataset_frame)),
             "feature_columns": training_result.feature_columns,
             "feature_count": len(training_result.feature_columns),
@@ -120,6 +150,7 @@ class TrainingService:
     ) -> dict[str, Any]:
         resolved_dataset_name = dataset_name or self.settings.default_dataset_name
         resolved_model_name = resolve_model_name(model_name=model_name, settings=self.settings)
+        task_type = resolve_model_task(model_name=resolved_model_name, settings=self.settings)
         dataset_frame = self.ranking_service.read_panel_dataset(dataset_name=resolved_dataset_name)
 
         training_result = run_walkforward_training(
@@ -138,7 +169,14 @@ class TrainingService:
         summary_report = {
             "dataset_name": resolved_dataset_name,
             "model_name": resolved_model_name,
-            "target_column": FUTURE_RETURN_5D_COLUMN,
+            "task_type": task_type,
+            "target_column": (
+                RELEVANCE_5D_5Q_COLUMN if task_type == "ranking" else FUTURE_RETURN_5D_COLUMN
+            ),
+            "training_label_column": (
+                RELEVANCE_5D_5Q_COLUMN if task_type == "ranking" else FUTURE_RETURN_5D_COLUMN
+            ),
+            "evaluation_return_column": FUTURE_RETURN_5D_COLUMN,
             "feature_columns": training_result.feature_columns,
             "feature_count": len(training_result.feature_columns),
             "total_rows": int(len(dataset_frame)),

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from suffering.cli import main
 
-SUPPORTED_MODELS = {"hist_gbr", "xgb_regressor"}
+SUPPORTED_MODELS = {"hist_gbr", "xgb_regressor", "xgb_ranker"}
 
 
 class FakeTrainingService:
@@ -31,7 +31,7 @@ class FakeTrainingService:
         if resolved_model_name not in SUPPORTED_MODELS:
             raise ValueError(
                 "Unsupported training model: "
-                f"{resolved_model_name}. Supported models: hist_gbr, xgb_regressor"
+                f"{resolved_model_name}. Supported models: hist_gbr, xgb_regressor, xgb_ranker"
             )
         return resolved_model_name
 
@@ -42,9 +42,16 @@ class FakeTrainingService:
     ) -> dict[str, object]:
         resolved_model_name = self._resolve_model_name(model_name)
         artifacts = self._artifact_paths(resolved_model_name)
+        task_type = "ranking" if resolved_model_name == "xgb_ranker" else "regression"
+        training_label_column = (
+            "relevance_5d_5q" if resolved_model_name == "xgb_ranker" else "future_return_5d"
+        )
         return {
             "dataset_name": dataset_name or "panel_5d",
             "model_name": resolved_model_name,
+            "task_type": task_type,
+            "training_label_column": training_label_column,
+            "evaluation_return_column": "future_return_5d",
             "total_rows": 30,
             "feature_columns": ["feature_alpha", "feature_beta"],
             "feature_count": 2,
@@ -69,22 +76,24 @@ class FakeTrainingService:
                 },
             },
             "validation_metrics": {
-                "mae": 0.1,
-                "rmse": 0.12,
+                "mae": None if task_type == "ranking" else 0.1,
+                "rmse": None if task_type == "ranking" else 0.12,
                 "overall_spearman_corr": 0.5,
                 "daily_rank_ic_mean": 0.4,
                 "daily_rank_ic_std": 0.1,
                 "top_5_mean_future_return": 0.02,
                 "top_10_mean_future_return": 0.015,
+                "ndcg_at_5_mean": 0.81,
             },
             "test_metrics": {
-                "mae": 0.11,
-                "rmse": 0.13,
+                "mae": None if task_type == "ranking" else 0.11,
+                "rmse": None if task_type == "ranking" else 0.13,
                 "overall_spearman_corr": 0.45,
                 "daily_rank_ic_mean": 0.35,
                 "daily_rank_ic_std": 0.08,
                 "top_5_mean_future_return": 0.018,
                 "top_10_mean_future_return": 0.012,
+                "ndcg_at_5_mean": 0.79,
             },
             "artifacts": {
                 "model_path": str(artifacts["model_path"]),
@@ -107,9 +116,15 @@ class FakeTrainingService:
     ) -> dict[str, object]:
         resolved_model_name = self._resolve_model_name(model_name)
         artifacts = self._artifact_paths(resolved_model_name)
+        task_type = "ranking" if resolved_model_name == "xgb_ranker" else "regression"
         return {
             "dataset_name": dataset_name or "panel_5d",
             "model_name": resolved_model_name,
+            "task_type": task_type,
+            "training_label_column": (
+                "relevance_5d_5q" if resolved_model_name == "xgb_ranker" else "future_return_5d"
+            ),
+            "evaluation_return_column": "future_return_5d",
             "total_rows": 48,
             "date_count": 12,
             "feature_columns": ["feature_alpha", "feature_beta"],
@@ -146,8 +161,18 @@ class FakeTrainingService:
             ],
             "notes": [],
             "test_metrics_summary": {
-                "mae": {"mean": 0.1, "std": 0.01, "min": 0.09, "max": 0.11},
-                "rmse": {"mean": 0.12, "std": 0.01, "min": 0.11, "max": 0.13},
+                "mae": {
+                    "mean": None if task_type == "ranking" else 0.1,
+                    "std": None if task_type == "ranking" else 0.01,
+                    "min": None if task_type == "ranking" else 0.09,
+                    "max": None if task_type == "ranking" else 0.11,
+                },
+                "rmse": {
+                    "mean": None if task_type == "ranking" else 0.12,
+                    "std": None if task_type == "ranking" else 0.01,
+                    "min": None if task_type == "ranking" else 0.11,
+                    "max": None if task_type == "ranking" else 0.13,
+                },
                 "overall_spearman_corr": {
                     "mean": 0.5,
                     "std": 0.05,
@@ -178,6 +203,12 @@ class FakeTrainingService:
                     "min": 0.014,
                     "max": 0.016,
                 },
+                "ndcg_at_5_mean": {
+                    "mean": 0.8,
+                    "std": 0.02,
+                    "min": 0.78,
+                    "max": 0.82,
+                },
             },
             "artifacts": {
                 "summary_path": str(artifacts["walkforward_summary_path"]),
@@ -205,6 +236,7 @@ def test_train_baseline_command_supports_hist_gbr(monkeypatch, capsys, tmp_path:
     assert exit_code == 0
     assert "dataset: panel_5d" in captured.out
     assert "model: hist_gbr" in captured.out
+    assert "task_type: regression" in captured.out
     assert "feature_count: 2" in captured.out
 
 
@@ -224,6 +256,25 @@ def test_train_baseline_command_supports_xgb_regressor(
     assert exit_code == 0
     assert "model: xgb_regressor" in captured.out
     assert "xgb_regressor_metrics.json" in captured.out
+
+
+def test_train_baseline_command_supports_xgb_ranker(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_training_service",
+        lambda settings=None: FakeTrainingService(tmp_path),
+    )
+
+    exit_code = main(["train-baseline", "--model", "xgb_ranker"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "model: xgb_ranker" in captured.out
+    assert "task_type: ranking" in captured.out
+    assert "ndcg_at_5_mean:" in captured.out
 
 
 def test_train_baseline_command_reports_unknown_model(monkeypatch, capsys, tmp_path: Path) -> None:
@@ -261,6 +312,7 @@ def test_train_show_command_can_be_called(monkeypatch, capsys, tmp_path: Path) -
 
     assert exit_code == 0
     assert "model: xgb_regressor" in captured.out
+    assert "task_type: regression" in captured.out
     assert "model_exists: True" in captured.out
     assert "validation_predictions_exists: True" in captured.out
     assert "test_predictions_exists: True" in captured.out
@@ -282,6 +334,7 @@ def test_train_walkforward_command_supports_hist_gbr(
     assert exit_code == 0
     assert "dataset: panel_5d" in captured.out
     assert "model: hist_gbr" in captured.out
+    assert "task_type: regression" in captured.out
     assert "fold_count: 3" in captured.out
     assert "walkforward_test_metric_means:" in captured.out
 
@@ -302,6 +355,25 @@ def test_train_walkforward_command_supports_xgb_regressor(
     assert exit_code == 0
     assert "model: xgb_regressor" in captured.out
     assert "xgb_regressor_walkforward_summary.json" in captured.out
+
+
+def test_train_walkforward_command_supports_xgb_ranker(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_training_service",
+        lambda settings=None: FakeTrainingService(tmp_path),
+    )
+
+    exit_code = main(["train-walkforward", "--model", "xgb_ranker"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "model: xgb_ranker" in captured.out
+    assert "task_type: ranking" in captured.out
+    assert "xgb_ranker_walkforward_summary.json" in captured.out
 
 
 def test_train_walkforward_show_command_can_be_called(
@@ -329,6 +401,7 @@ def test_train_walkforward_show_command_can_be_called(
 
     assert exit_code == 0
     assert "model: xgb_regressor" in captured.out
+    assert "task_type: regression" in captured.out
     assert "summary_exists: True" in captured.out
     assert "folds_exists: True" in captured.out
     assert "predictions_exists: True" in captured.out

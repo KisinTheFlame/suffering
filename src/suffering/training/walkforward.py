@@ -9,13 +9,15 @@ import pandas as pd
 from suffering.config.settings import Settings
 from suffering.data.models import DATE_COLUMN, SYMBOL_COLUMN
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
+from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
 from suffering.training.baseline import (
     PREDICTION_COLUMN,
     select_numeric_feature_columns,
     train_baseline_regressor,
 )
 from suffering.training.evaluate import evaluate_predictions, summarize_metric_collection
-from suffering.training.models import resolve_model_name
+from suffering.training.models import resolve_model_name, resolve_model_task
+from suffering.training.ranking import SCORE_PREDICTION_COLUMN, train_ranker
 from suffering.training.splits import build_frame_date_summary
 
 
@@ -38,6 +40,7 @@ class WalkForwardFoldResult:
 
 @dataclass(frozen=True)
 class WalkForwardTrainingResult:
+    task_type: str
     feature_columns: list[str]
     fold_results: list[WalkForwardFoldResult]
     test_metrics_summary: dict[str, dict[str, float | None]]
@@ -138,6 +141,7 @@ def run_walkforward_training(
     min_folds: int = 1,
 ) -> WalkForwardTrainingResult:
     resolved_model_name = resolve_model_name(model_name=model_name, settings=settings)
+    task_type = resolve_model_task(model_name=resolved_model_name, settings=settings)
     feature_columns = select_numeric_feature_columns(frame)
     if not feature_columns:
         raise ValueError("No numeric feature columns available for walk-forward baseline training")
@@ -153,28 +157,64 @@ def run_walkforward_training(
     fold_results: list[WalkForwardFoldResult] = []
     combined_predictions: list[pd.DataFrame] = []
     for fold in folds:
-        training_result = train_baseline_regressor(
-            train_frame=fold.train_frame,
-            validation_frame=fold.validation_frame,
-            test_frame=fold.test_frame,
-            model_name=resolved_model_name,
-            feature_columns=feature_columns,
-            settings=settings,
-            random_state=random_state,
-        )
-
-        validation_metrics = evaluate_predictions(training_result.validation_predictions)
-        test_metrics = evaluate_predictions(training_result.test_predictions)
-        fold_predictions = (
-            training_result.test_predictions.rename(
-                columns={
-                    FUTURE_RETURN_5D_COLUMN: "y_true",
-                    PREDICTION_COLUMN: "y_pred",
-                }
+        if task_type == "ranking":
+            training_result = train_ranker(
+                train_frame=fold.train_frame,
+                validation_frame=fold.validation_frame,
+                test_frame=fold.test_frame,
+                model_name=resolved_model_name,
+                feature_columns=feature_columns,
+                settings=settings,
+                random_state=random_state,
             )
-            .assign(fold_id=fold.fold_id)
-            .loc[:, ["fold_id", DATE_COLUMN, SYMBOL_COLUMN, "y_true", "y_pred"]]
-        )
+            validation_metrics = evaluate_predictions(
+                training_result.validation_predictions,
+                prediction_column=SCORE_PREDICTION_COLUMN,
+                include_error_metrics=False,
+            )
+            test_metrics = evaluate_predictions(
+                training_result.test_predictions,
+                prediction_column=SCORE_PREDICTION_COLUMN,
+                include_error_metrics=False,
+            )
+            fold_predictions = (
+                training_result.test_predictions.assign(fold_id=fold.fold_id)
+                .loc[
+                    :,
+                    [
+                        "fold_id",
+                        DATE_COLUMN,
+                        SYMBOL_COLUMN,
+                        FUTURE_RETURN_5D_COLUMN,
+                        RELEVANCE_5D_5Q_COLUMN,
+                        SCORE_PREDICTION_COLUMN,
+                        "model_name",
+                    ],
+                ]
+            )
+        else:
+            training_result = train_baseline_regressor(
+                train_frame=fold.train_frame,
+                validation_frame=fold.validation_frame,
+                test_frame=fold.test_frame,
+                model_name=resolved_model_name,
+                feature_columns=feature_columns,
+                settings=settings,
+                random_state=random_state,
+            )
+
+            validation_metrics = evaluate_predictions(training_result.validation_predictions)
+            test_metrics = evaluate_predictions(training_result.test_predictions)
+            fold_predictions = (
+                training_result.test_predictions.rename(
+                    columns={
+                        FUTURE_RETURN_5D_COLUMN: "y_true",
+                        PREDICTION_COLUMN: "y_pred",
+                    }
+                )
+                .assign(fold_id=fold.fold_id)
+                .loc[:, ["fold_id", DATE_COLUMN, SYMBOL_COLUMN, "y_true", "y_pred"]]
+            )
 
         fold_results.append(
             WalkForwardFoldResult(
@@ -198,6 +238,7 @@ def run_walkforward_training(
     )
 
     return WalkForwardTrainingResult(
+        task_type=task_type,
         feature_columns=feature_columns,
         fold_results=fold_results,
         test_metrics_summary=summarize_metric_collection(

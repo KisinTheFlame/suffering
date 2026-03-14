@@ -1,8 +1,8 @@
 # suffering
 
-`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮则在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”。
+`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、一个基于 `HistGradientBoostingRegressor` 的 baseline 训练闭环，以及一个更严格的 walk-forward 时间验证闭环。但仍然不包含 LTR/XGBoost/LightGBM、正式回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层和标签层都还不稳定，就过早引入更复杂的训练与回测，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环，以及一个 ranking 模型训练闭环和更严格的 walk-forward 时间验证闭环。但仍然不包含正式回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -240,40 +240,52 @@ data/datasets/daily/panel_5d.csv
 
 其中 `relevance_5d_5q` 的含义是：对每个交易日，基于当日所有 symbol 的 `future_return_5d` 做横截面排序，再划成最多 5 桶，最差桶记为 `0`。如果某日可用 symbol 数太少，桶数会自然退化，但流程仍然保持稳定可复现。
 
-## 第七轮已支持的训练闭环
+## 第八轮已支持的训练闭环
 
-当前仓库已经可以直接在已缓存的 `panel_5d` dataset 上完成三层连续演进后的最小训练闭环：
+当前仓库已经可以直接在已缓存的 `panel_5d` dataset 上完成四层连续演进后的最小训练闭环：
 
 - 第五轮：单次时间顺序切分的 baseline 训练
 - 第六轮：更严格的 walk-forward / rolling 时间验证
-- 第七轮：在同一套训练与验证框架内并存支持第二个更强回归模型 `xgb_regressor`
+- 第七轮：在同一套训练与验证框架内并存支持第二个回归模型 `xgb_regressor`
+- 第八轮：在同一套训练与验证框架内最小增量接入 ranking 模型 `xgb_ranker`
 
-当前支持的模型有两个：
+当前支持的模型有三个：
 
 - `hist_gbr`：`scikit-learn` 的 `HistGradientBoostingRegressor`
 - `xgb_regressor`：`xgboost.XGBRegressor`
+- `xgb_ranker`：`xgboost.XGBRanker`
 
-这两种模型都会复用同一套训练约束：
+三种模型都会复用同一套训练约束：
 
 - 只使用数值特征
 - 明确排除 `date`、`symbol`、`future_return_5d`、`relevance_5d_5q`
-- 固定预测目标为 `future_return_5d`
 - 不做 shuffle，不做随机切分
-- 不做分类，不做 ranking objective，不引入 query/group
-- 复用同一套最小评估指标和 artifacts 风格
+- 复用同一套 dataset cache、split、walk-forward、artifact 和 CLI 风格
 
-当前仍然先做回归、不做 ranking，原因很直接：
+其中回归与 ranking 的训练标签定义分别是：
 
-- 现有 dataset / split / walk-forward 闭环已经先围绕 `future_return_5d` 回归目标跑通
-- 这一轮重点是把第二个更强模型无缝接入现有闭环，而不是同时引入 ranking 数据组织和目标函数复杂度
-- 这样可以先在同一时间切分与 walk-forward 规则下做最小可比对，为下一轮 ranking 模型接入保留自然接口
+- `hist_gbr` / `xgb_regressor`：训练标签固定为 `future_return_5d`
+- `xgb_ranker`：训练标签固定为 `relevance_5d_5q`
+
+`xgb_ranker` 的 query group 定义也保持非常克制：
+
+- 每个交易日就是一个 query group
+- 同一天内的所有 symbol 属于同一个 group
+- train / validation / test / walk-forward 每个 split 都基于自己的数据独立重建 groups
+- group 顺序严格按 `date` 稳定排序
 
 当前会输出的评估指标包括：
 
-- 回归指标：`mae`、`rmse`
-- 排序指标：`overall_spearman_corr`
+- 回归误差指标：`mae`、`rmse`
+- 排序相关指标：`overall_spearman_corr`
 - 按日 rank IC：`daily_rank_ic_mean`、`daily_rank_ic_std`
 - 朴素 top-k 指标：`top_5_mean_future_return`、`top_10_mean_future_return`
+- 轻量 ranking-native 指标：`ndcg_at_5_mean`
+
+对 `xgb_ranker` 而言，评估时仍然会继续结合：
+
+- `future_return_5d`：作为真实未来收益列，用于相关性与 top-k 收益统计
+- `relevance_5d_5q`：作为真实相关性，用于计算 `ndcg_at_5_mean`
 
 ### 单次时间切分
 
@@ -291,6 +303,11 @@ artifacts/models/xgb_regressor.pkl
 artifacts/reports/xgb_regressor_metrics.json
 artifacts/predictions/xgb_regressor_validation.csv
 artifacts/predictions/xgb_regressor_test.csv
+
+artifacts/models/xgb_ranker.pkl
+artifacts/reports/xgb_ranker_metrics.json
+artifacts/predictions/xgb_ranker_validation.csv
+artifacts/predictions/xgb_ranker_test.csv
 ```
 
 ### walk-forward 如何工作
@@ -316,6 +333,10 @@ artifacts/predictions/hist_gbr_walkforward_test_predictions.csv
 artifacts/reports/xgb_regressor_walkforward_summary.json
 artifacts/reports/xgb_regressor_walkforward_folds.csv
 artifacts/predictions/xgb_regressor_walkforward_test_predictions.csv
+
+artifacts/reports/xgb_ranker_walkforward_summary.json
+artifacts/reports/xgb_ranker_walkforward_folds.csv
+artifacts/predictions/xgb_ranker_walkforward_test_predictions.csv
 ```
 
 ## 从 raw data 到 walk-forward 验证
@@ -343,17 +364,21 @@ uv run suffering dataset-show
 ```bash
 uv run suffering train-baseline --model hist_gbr
 uv run suffering train-baseline --model xgb_regressor
+uv run suffering train-baseline --model xgb_ranker
 uv run suffering train-show --model hist_gbr
 uv run suffering train-show --model xgb_regressor
+uv run suffering train-show --model xgb_ranker
 uv run suffering train-walkforward --model hist_gbr
 uv run suffering train-walkforward --model xgb_regressor
+uv run suffering train-walkforward --model xgb_ranker
 uv run suffering train-walkforward-show --model hist_gbr
 uv run suffering train-walkforward-show --model xgb_regressor
+uv run suffering train-walkforward-show --model xgb_ranker
 ```
 
-`train-baseline` 会打印 dataset 名称、当前模型名、样本数、特征列、各 split 日期范围、validation / test 指标，以及模型 / 预测 / 报告路径。
+`train-baseline` 会打印 dataset 名称、当前模型名、任务类型、样本数、特征列、各 split 日期范围、validation / test 指标，以及模型 / 预测 / 报告路径。
 
-`train-walkforward` 会打印 dataset 名称、当前模型名、fold 数、每个 fold 的 train / validation / test 日期范围、汇总后的主要 test 指标均值，以及 summary / folds / predictions 的保存路径。
+`train-walkforward` 会打印 dataset 名称、当前模型名、任务类型、fold 数、每个 fold 的 train / validation / test 日期范围、汇总后的主要 test 指标均值，以及 summary / folds / predictions 的保存路径。
 
 `train-show` 会读取指定模型的单次切分 metrics report，并检查模型文件、预测文件是否存在。
 
@@ -361,11 +386,10 @@ uv run suffering train-walkforward-show --model xgb_regressor
 
 ## 当前仍然不支持
 
-- ranking objective / LTR / query-group 数据组织
-- LightGBM / CatBoost
-- 超参数搜索
 - 正式回测、累计收益曲线、交易成本、仓位管理
 - benchmark 对比
+- LightGBM / CatBoost / 多模型 ranking 对比框架
+- 超参数搜索
 - 远程训练 / GPU / Docker / 数据库 / CI / 调度系统
 - 复杂特征预处理 pipeline
 - 实验管理平台
@@ -378,9 +402,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型单次切分训练闭环 + 最小 walk-forward 验证闭环”。下一轮可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环”。后续可以按下面的方向逐步扩展：
 
-- `ranking`：在这套训练验证框架之上接 ranking 模型与更贴近排序目标的训练方式
-- `backtest`：实现更正式的组合评估、持仓模拟与指标汇总
+- `backtest`：在现有 ranking 训练验证框架之上接更正式的组合评估、组合构建与回测
+- `backtest`：补上交易成本、持仓模拟与指标汇总
 
 在这些能力真正落地之前，当前仓库仍然保持小而清晰，避免过早引入复杂抽象。

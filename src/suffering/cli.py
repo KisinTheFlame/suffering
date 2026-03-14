@@ -199,8 +199,9 @@ def run_doctor() -> int:
     print(f"default_symbols: {', '.join(get_default_universe(settings))}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
-        "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor training, "
-        "and walk-forward validation layers available; formal backtest is not implemented yet"
+        "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor/xgb_ranker "
+        "training, and walk-forward validation layers available; formal backtest is not "
+        "implemented yet"
     )
     return 0
 
@@ -396,6 +397,7 @@ def run_train_baseline(dataset_name: str | None, model_name: str | None) -> int:
 
     print(f"dataset: {summary['dataset_name']}")
     print(f"model: {summary['model_name']}")
+    print(f"task_type: {summary['task_type']}")
     print(f"rows: {summary['total_rows']}")
     print(f"feature_count: {summary['feature_count']}")
     print(f"feature_columns: {', '.join(summary['feature_columns'])}")
@@ -437,6 +439,7 @@ def run_train_show(model_name: str | None) -> int:
 
     print(f"model: {report['model_name']}")
     print(f"dataset: {report['dataset_name']}")
+    print(f"task_type: {report.get('task_type', 'regression')}")
     print(f"feature_count: {report['feature_count']}")
 
     for split_name in ("train", "validation", "test"):
@@ -485,6 +488,7 @@ def run_train_walkforward(dataset_name: str | None, model_name: str | None) -> i
 
     print(f"dataset: {summary['dataset_name']}")
     print(f"model: {summary['model_name']}")
+    print(f"task_type: {summary['task_type']}")
     print(f"rows: {summary['total_rows']}")
     print(f"date_count: {summary['date_count']}")
     print(f"feature_count: {summary['feature_count']}")
@@ -530,6 +534,7 @@ def run_train_walkforward_show(model_name: str | None) -> int:
 
     print(f"model: {report['model_name']}")
     print(f"dataset: {report['dataset_name']}")
+    print(f"task_type: {report.get('task_type', 'regression')}")
     print(f"feature_count: {report['feature_count']}")
     print(f"fold_count: {report['fold_count']}")
     if report["notes"]:
