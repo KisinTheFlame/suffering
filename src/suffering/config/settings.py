@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     default_start_date: str = "2020-01-01"
     default_end_date: str | None = None
     default_symbols: list[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"]
+    default_label_horizon_days: int = 5
+    default_dataset_name: str = "panel_5d"
 
     model_config = SettingsConfigDict(
         env_file=".env",

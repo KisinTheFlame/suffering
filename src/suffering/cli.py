@@ -12,6 +12,9 @@ from suffering.data import build_data_service, get_default_universe
 from suffering.data.universe import resolve_symbols
 from suffering.features import build_feature_service
 from suffering.features.definitions import FEATURE_COLUMNS
+from suffering.ranking import build_ranking_service
+from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
+from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +66,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show cached daily features for one symbol.",
     )
     feature_show_parser.add_argument("symbol", help="Ticker symbol such as AAPL")
+
+    label_build_parser = subparsers.add_parser(
+        "label-build",
+        help="Build daily labels from cached raw data.",
+    )
+    label_build_parser.add_argument(
+        "symbols",
+        nargs="*",
+        help="Ticker symbols such as AAPL MSFT",
+    )
+
+    dataset_build_parser = subparsers.add_parser(
+        "dataset-build",
+        help="Build a cached panel dataset from feature and label caches.",
+    )
+    dataset_build_parser.add_argument(
+        "symbols",
+        nargs="*",
+        help="Ticker symbols such as AAPL MSFT",
+    )
+    dataset_build_parser.add_argument(
+        "--dataset-name",
+        help="Dataset cache name, defaulting to the configured panel dataset name.",
+    )
+
+    dataset_show_parser = subparsers.add_parser(
+        "dataset-show",
+        help="Show the cached panel dataset summary.",
+    )
+    dataset_show_parser.add_argument(
+        "--dataset-name",
+        help="Dataset cache name, defaulting to the configured panel dataset name.",
+    )
     return parser
 
 
@@ -81,8 +117,8 @@ def run_doctor() -> int:
     print(f"default_symbols: {', '.join(get_default_universe(settings))}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
-        "status: minimal data and feature layers available; "
-        "label/training/backtest are not implemented yet"
+        "status: minimal data, feature, label, and dataset layers available; "
+        "training/backtest are not implemented yet"
     )
     return 0
 
@@ -176,6 +212,85 @@ def run_feature_show(symbol: str) -> int:
     return 0
 
 
+def run_label_build(symbols: list[str]) -> int:
+    settings = get_settings()
+    service = build_ranking_service(settings)
+    resolved_symbols = resolve_symbols(symbols, settings)
+    failed_symbols: list[str] = []
+
+    print(
+        f"building daily labels ({settings.default_label_horizon_days}d) "
+        f"for {len(resolved_symbols)} symbol(s) ..."
+    )
+    for symbol in resolved_symbols:
+        try:
+            frame = service.build_label_for_symbol(symbol)
+        except FileNotFoundError as exc:
+            failed_symbols.append(symbol)
+            print(f"{symbol}: {exc}")
+            continue
+
+        path = service.storage.label_path_for_symbol(symbol)
+        valid_rows = int(frame[FUTURE_RETURN_5D_COLUMN].notna().sum())
+        print(f"{symbol}: {len(frame)} rows, {valid_rows} labeled rows cached at {path}")
+
+    return 1 if failed_symbols else 0
+
+
+def run_dataset_build(symbols: list[str], dataset_name: str | None) -> int:
+    settings = get_settings()
+    service = build_ranking_service(settings)
+    resolved_dataset_name = dataset_name or settings.default_dataset_name
+
+    print(f"building panel dataset `{resolved_dataset_name}` ...")
+    try:
+        frame = service.build_panel_dataset(symbols=symbols, dataset_name=resolved_dataset_name)
+    except FileNotFoundError as exc:
+        print(str(exc))
+        return 1
+
+    path = service.storage.dataset_path(resolved_dataset_name)
+    symbol_count = frame["symbol"].nunique() if "symbol" in frame.columns else 0
+    if frame.empty:
+        date_range = "n/a"
+    else:
+        date_range = f"{frame['date'].min().date()} -> {frame['date'].max().date()}"
+
+    print(f"rows: {len(frame)}")
+    print(f"columns: {len(frame.columns)}")
+    print(f"date_range: {date_range}")
+    print(f"symbols: {symbol_count}")
+    print(f"cached at: {path}")
+    return 0
+
+
+def run_dataset_show(dataset_name: str | None) -> int:
+    settings = get_settings()
+    service = build_ranking_service(settings)
+    resolved_dataset_name = dataset_name or settings.default_dataset_name
+
+    try:
+        frame = service.read_panel_dataset(dataset_name=resolved_dataset_name)
+    except FileNotFoundError:
+        print(
+            f"cached dataset not found: {resolved_dataset_name}. "
+            f"Run `suffering dataset-build` first."
+        )
+        return 1
+
+    print(f"dataset: {resolved_dataset_name}")
+    print(f"rows: {len(frame)}")
+    print(f"columns: {len(frame.columns)}")
+    print(f"has_{FUTURE_RETURN_5D_COLUMN}: {FUTURE_RETURN_5D_COLUMN in frame.columns}")
+    print(f"has_{RELEVANCE_5D_5Q_COLUMN}: {RELEVANCE_5D_5Q_COLUMN in frame.columns}")
+    print(f"column_names: {', '.join(frame.columns)}")
+    print("head:")
+    print(frame.head().to_string(index=False))
+    print("tail:")
+    print(frame.tail().to_string(index=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -194,6 +309,12 @@ def main(argv: list[str] | None = None) -> int:
         return run_feature_build(symbols=args.symbols)
     if args.command == "feature-show":
         return run_feature_show(symbol=args.symbol)
+    if args.command == "label-build":
+        return run_label_build(symbols=args.symbols)
+    if args.command == "dataset-build":
+        return run_dataset_build(symbols=args.symbols, dataset_name=args.dataset_name)
+    if args.command == "dataset-show":
+        return run_dataset_show(dataset_name=args.dataset_name)
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")
