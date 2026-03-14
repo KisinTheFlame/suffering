@@ -1,8 +1,8 @@
 # suffering
 
-`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”。
+`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”；第十轮继续在现有最小组合评估层之上补上了“benchmark / baseline strategy 对比”闭环。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环，以及一个只基于样本外 walk-forward test predictions 的最小组合评估层。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层，以及一个和模型 backtest 同口径的最小 benchmark comparison 层。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -55,6 +55,8 @@ cp .env.example .env
 - `DEFAULT_DATA_PROVIDER`
 - `DEFAULT_START_DATE`
 - `DEFAULT_SYMBOLS`
+- `DEFAULT_BENCHMARK_SYMBOL`
+- `DEFAULT_BENCHMARK_MOMENTUM_FEATURE`
 
 ## 运行 CLI
 
@@ -384,9 +386,17 @@ uv run suffering train-walkforward-show --model xgb_ranker
 
 `train-walkforward-show` 会读取指定模型的 walk-forward summary report，并检查 folds / predictions 产物是否存在。
 
-## 第九轮已支持的最小组合评估
+## 第十轮已支持的最小组合评估与 benchmark comparison
 
-第九轮在现有 `walk-forward test predictions` 之上，补上了一个刻意克制的组合评估闭环：
+第十轮继续沿着第九轮的最小组合评估思路前进，但这次重点不是把回测框架做复杂，而是在现有模型 backtest 之上补上一个刻意克制、可直接比较的 benchmark comparison 闭环。
+
+当前这层能力仍然只做三件事：
+
+- 复用已有模型 walk-forward backtest artifact
+- 构造三个最小 benchmark
+- 用统一成本口径、统一持有期、统一日期范围生成 comparison summary / table
+
+底层模型组合评估规则仍然保持第九轮的朴素实现：
 
 - 只使用 walk-forward 的 `test predictions`
 - 对 ranking 模型统一读取 `score_pred`
@@ -398,6 +408,24 @@ uv run suffering train-walkforward-show --model xgb_ranker
 - 使用 raw daily price cache 还原日度 gross / net 收益，而不是直接把 `future_return_5d` 当成整条净值曲线
 
 之所以这轮明确只使用 walk-forward 的 test predictions，是为了尽量保证组合评估建立在样本外信号之上，避免把 train / validation 结果混入后高估策略质量。
+
+### 当前支持的 benchmark
+
+当前只支持下面三个 benchmark，不做额外策略扩展：
+
+- `qqq_buy_and_hold`：使用本地 `QQQ` raw daily cache，从模型组合日期起点持有到终点，net 收益只按一次买入一次卖出成本处理
+- `equal_weight_universe_buy_and_hold`：基于当前模型 backtest 用到的 symbol universe，在组合起点等权买入并持有到终点，不做中途调仓
+- `simple_momentum_top_k`：基于现有 feature cache 的 `return_20d` 做横截面排序，按和模型 backtest 一致的 `top-k / holding_days / cost_bps_per_side` 构造重叠组合
+
+其中 `simple_momentum_top_k` 是当前最关键的对照组，因为它不依赖训练模型，但组合构造规则会尽量和模型策略保持一致：
+
+- 同样的 signal date 集合
+- 同样的 `t` 发信号、`t+1` 开盘买入、`t+5` 收盘卖出
+- 同样的 `top-k`
+- 同样的重叠持仓规则
+- 同样的 gross / net 成本口径
+
+这样可以把“模型是否真的优于一个极简、可复现的动量基线”放到同一口径下比较。
 
 ### 当前组合规则
 
@@ -447,47 +475,87 @@ artifacts/backtests/<model>_top5_h5_cost10_equity_curve.csv
 artifacts/backtests/<model>_top5_h5_cost10_trades.csv
 ```
 
-### 运行最小组合评估
+### comparison 输出内容
 
-先准备数据、特征、label、dataset 和 walk-forward 预测：
+benchmark comparison 会额外输出：
+
+- `artifacts/backtests/comparisons/<model>_top5_h5_cost10_comparison_summary.json`
+- `artifacts/backtests/comparisons/<model>_top5_h5_cost10_comparison_table.csv`
+- 各 benchmark 自己的 `daily_returns / equity_curve / trades` CSV
+
+comparison table 当前至少包含：
+
+- `strategy_name`
+- `task_type`
+- `total_return_net`
+- `sharpe_ratio_net`
+- `max_drawdown_net`
+- `annualized_return_net`
+- `annualized_volatility`
+- `average_daily_turnover`
+- `start_date`
+- `end_date`
+
+### 如何准备与运行
+
+先准备 raw data、feature、label、dataset、walk-forward 预测和模型 backtest：
 
 ```bash
-uv run suffering data-fetch
-uv run suffering feature-build
-uv run suffering label-build
-uv run suffering dataset-build
+uv run suffering data-fetch AAPL MSFT GOOGL AMZN META NVDA QQQ --start-date 2020-01-01 --end-date 2024-12-31
+uv run suffering feature-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering label-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering dataset-build AAPL MSFT GOOGL AMZN META NVDA
 uv run suffering train-walkforward --model xgb_ranker
+uv run suffering backtest-walkforward --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
 ```
 
-然后运行最小组合评估：
+如果本地还没有 `QQQ` raw cache，需要单独先准备：
 
 ```bash
-uv run suffering backtest-walkforward --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
-uv run suffering backtest-show --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+uv run suffering data-fetch QQQ --start-date 2020-01-01 --end-date 2024-12-31
 ```
 
-`backtest-walkforward` 会打印模型名、top-k、holding days、成本假设、信号日期范围、组合日期范围、交易笔数、gross / net 总收益、gross / net Sharpe、gross / net max drawdown，以及 summary / daily returns / equity curve / trades 的保存路径。
+注意：comparison 这一步不会偷偷联网抓 `QQQ`，如果本地缺失会直接报错提示先抓数据。
 
-`backtest-show` 会读取已保存的 summary，并检查 `daily_returns`、`equity_curve`、`trades` 产物是否存在。
+然后运行 comparison：
+
+```bash
+uv run suffering backtest-compare --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+uv run suffering backtest-compare-show --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+```
+
+`backtest-walkforward` 仍然负责生成模型自己的最小 backtest artifact。
+
+`backtest-compare` 会读取这个模型 backtest，再构造三个 benchmark，并打印：
+
+- 模型名
+- benchmark 数量
+- comparison 日期范围
+- 模型策略净收益 / 净 Sharpe / 净回撤
+- benchmark 中净 Sharpe 最好的策略
+- benchmark 中净收益最好的策略
+- comparison summary / table 路径
+
+`backtest-compare-show` 会读取已保存的 comparison summary / table，并打印主要比较结果以及 comparison 文件是否存在。
+
+`backtest-show` 仍然只负责读取单个模型 backtest summary，并检查 `daily_returns`、`equity_curve`、`trades` 产物是否存在。
 
 ### 为什么这还不是正式回测
 
 这一层仍然只是“最小但可信”的组合评估，不是完整生产级回测，原因包括：
 
-- 还没有 benchmark 对比
 - 还没有更细的滑点 / 冲击 / 容量成本模型
 - 还没有行业中性、组合约束、风险模型和风控规则
 - 还没有更完整的现金管理、停牌处理和执行层假设
 
-后续轮次会继续在这套轻量组合评估之上增量补：
+后续轮次会继续在这套 comparison 层之上增量补：
 
-- benchmark 对比
 - 更细的成本模型
+- benchmark 对比增强
 - 更丰富的组合约束与风控
 
 ## 当前仍然不支持
 
-- benchmark 对比
 - 复杂正式回测框架
 - 行业中性、风险模型、仓位优化
 - 更细的滑点 / 冲击成本 / 容量模型
@@ -505,9 +573,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层”。后续可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层 + 最小 benchmark comparison 层”。后续可以按下面的方向逐步扩展：
 
-- `backtest`：在现有 walk-forward 组合评估之上接 benchmark 对比
+- `backtest`：在现有 comparison 层之上继续增强 benchmark 对比
 - `backtest`：补上更细的成本模型、组合约束与风控
 
 在这些能力真正落地之前，当前仓库仍然保持小而清晰，避免过早引入复杂抽象。

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     default_top_k: int = 5
     default_holding_days: int = 5
     default_cost_bps_per_side: float = 5.0
+    default_benchmark_symbol: str = "QQQ"
+    default_benchmark_momentum_feature: str = "return_20d"
     xgb_n_estimators: int = 100
     xgb_max_depth: int = 4
     xgb_learning_rate: float = 0.05

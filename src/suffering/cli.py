@@ -6,6 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 from suffering import PROJECT_NAME, __version__
 from suffering.backtest import build_backtest_service
 from suffering.config.settings import get_settings
@@ -236,6 +238,60 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="Single-side transaction cost in basis points.",
     )
+
+    backtest_compare_parser = subparsers.add_parser(
+        "backtest-compare",
+        help="Compare a saved model backtest against the minimal benchmark set.",
+    )
+    backtest_compare_parser.add_argument(
+        "--model",
+        help=(
+            "Backtest model name, defaulting to the configured backtest model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    backtest_compare_parser.add_argument(
+        "--top-k",
+        type=int,
+        help="Number of names selected per signal date.",
+    )
+    backtest_compare_parser.add_argument(
+        "--holding-days",
+        type=int,
+        help="Holding window in trading days.",
+    )
+    backtest_compare_parser.add_argument(
+        "--cost-bps-per-side",
+        type=float,
+        help="Single-side transaction cost in basis points.",
+    )
+
+    backtest_compare_show_parser = subparsers.add_parser(
+        "backtest-compare-show",
+        help="Show a saved benchmark comparison summary and table.",
+    )
+    backtest_compare_show_parser.add_argument(
+        "--model",
+        help=(
+            "Backtest model name, defaulting to the configured backtest model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    backtest_compare_show_parser.add_argument(
+        "--top-k",
+        type=int,
+        help="Number of names selected per signal date.",
+    )
+    backtest_compare_show_parser.add_argument(
+        "--holding-days",
+        type=int,
+        help="Holding window in trading days.",
+    )
+    backtest_compare_show_parser.add_argument(
+        "--cost-bps-per-side",
+        type=float,
+        help="Single-side transaction cost in basis points.",
+    )
     return parser
 
 
@@ -256,11 +312,13 @@ def run_doctor() -> int:
     print(f"default_top_k: {settings.default_top_k}")
     print(f"default_holding_days: {settings.default_holding_days}")
     print(f"default_cost_bps_per_side: {settings.default_cost_bps_per_side}")
+    print(f"default_benchmark_symbol: {settings.default_benchmark_symbol}")
+    print(f"default_benchmark_momentum_feature: {settings.default_benchmark_momentum_feature}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
         "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor/xgb_ranker "
-        "training, walk-forward validation, and minimal walk-forward portfolio backtest "
-        "layers available; formal production backtest is not implemented yet"
+        "training, walk-forward validation, minimal walk-forward portfolio backtest, and "
+        "benchmark comparison layers available; formal production backtest is not implemented yet"
     )
     return 0
 
@@ -725,6 +783,151 @@ def run_backtest_show(
     return 0
 
 
+def run_backtest_compare(
+    model_name: str | None,
+    top_k: int | None,
+    holding_days: int | None,
+    cost_bps_per_side: float | None,
+) -> int:
+    settings = get_settings()
+    service = build_backtest_service(settings)
+    resolved_model_name = model_name or settings.default_backtest_model
+
+    try:
+        summary = service.run_backtest_comparison(
+            model_name=resolved_model_name,
+            top_k=top_k,
+            holding_days=holding_days,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+    except FileNotFoundError as exc:
+        message = str(exc)
+        if "Backtest summary not found" in message or "Backtest artifact not found" in message:
+            print(
+                "model backtest artifacts not found for "
+                f"{resolved_model_name}. "
+                f"Run `suffering backtest-walkforward --model {resolved_model_name}` first."
+            )
+        elif "Walk-forward test predictions not found" in message:
+            print(
+                f"{message}. Run `suffering train-walkforward --model {resolved_model_name}` first."
+            )
+        elif "Feature cache not found" in message:
+            print(f"{message} If needed, run `suffering feature-build` first.")
+        elif "Raw daily cache not found for symbol(s): QQQ" in message:
+            print(
+                f"{message} Benchmark comparison does not auto-fetch QQQ. "
+                "Run `suffering data-fetch QQQ "
+                "--start-date 2020-01-01 --end-date 2024-12-31` first."
+            )
+        elif "Raw daily cache not found" in message:
+            print(f"{message} If needed, run `suffering data-fetch` first.")
+        else:
+            print(message)
+        return 1
+    except ValueError as exc:
+        print(f"backtest comparison failed: {exc}")
+        return 1
+
+    model_strategy = summary["model_strategy"]
+    best_benchmark_by_sharpe = summary["best_benchmark_by_sharpe_net"]
+    best_benchmark_by_total_return = summary["best_benchmark_by_total_return_net"]
+    print(f"model: {summary['model_name']}")
+    print(f"top_k: {summary['top_k']}")
+    print(f"holding_days: {summary['holding_days']}")
+    print(f"cost_bps_per_side: {summary['cost_bps_per_side']}")
+    print(f"benchmark_count: {summary['benchmark_count']}")
+    print(
+        "comparison_date_range: "
+        f"{summary['comparison_date_start']} -> {summary['comparison_date_end']}"
+    )
+    print(f"model_net_total_return: {_format_metric(model_strategy['total_return_net'])}")
+    print(f"model_net_sharpe: {_format_metric(model_strategy['sharpe_ratio_net'])}")
+    print(f"model_net_max_drawdown: {_format_metric(model_strategy['max_drawdown_net'])}")
+    print(
+        "best_benchmark_by_sharpe_net: "
+        f"{best_benchmark_by_sharpe['strategy_name']} "
+        f"({_format_metric(best_benchmark_by_sharpe['sharpe_ratio_net'])})"
+    )
+    print(
+        "best_benchmark_by_total_return_net: "
+        f"{best_benchmark_by_total_return['strategy_name']} "
+        f"({_format_metric(best_benchmark_by_total_return['total_return_net'])})"
+    )
+    print(f"comparison_summary_path: {summary['artifacts']['summary_path']}")
+    print(f"comparison_table_path: {summary['artifacts']['table_path']}")
+    return 0
+
+
+def run_backtest_compare_show(
+    model_name: str | None,
+    top_k: int | None,
+    holding_days: int | None,
+    cost_bps_per_side: float | None,
+) -> int:
+    settings = get_settings()
+    service = build_backtest_service(settings)
+    resolved_model_name = model_name or settings.default_backtest_model
+
+    try:
+        report = service.read_backtest_comparison(
+            model_name=resolved_model_name,
+            top_k=top_k,
+            holding_days=holding_days,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+    except FileNotFoundError:
+        resolved_top_k = top_k if top_k is not None else settings.default_top_k
+        resolved_holding_days = (
+            holding_days if holding_days is not None else settings.default_holding_days
+        )
+        resolved_cost = (
+            float(cost_bps_per_side)
+            if cost_bps_per_side is not None
+            else float(settings.default_cost_bps_per_side)
+        )
+        print(
+            "backtest comparison not found for "
+            f"model={resolved_model_name}, top_k={resolved_top_k}, "
+            f"holding_days={resolved_holding_days}, cost_bps_per_side={resolved_cost}. "
+            "Run `suffering backtest-compare` first."
+        )
+        return 1
+    except ValueError as exc:
+        print(f"backtest comparison show failed: {exc}")
+        return 1
+
+    model_strategy = report["model_strategy"]
+    print(f"model: {report['model_name']}")
+    print(f"benchmark_count: {report['benchmark_count']}")
+    print(
+        "comparison_date_range: "
+        f"{report['comparison_date_start']} -> {report['comparison_date_end']}"
+    )
+    print(f"model_net_total_return: {_format_metric(model_strategy['total_return_net'])}")
+    print(f"model_net_sharpe: {_format_metric(model_strategy['sharpe_ratio_net'])}")
+    print(
+        "best_benchmark_by_sharpe_net: "
+        f"{report['best_benchmark_by_sharpe_net']['strategy_name']} "
+        f"({_format_metric(report['best_benchmark_by_sharpe_net']['sharpe_ratio_net'])})"
+    )
+    print(
+        "best_benchmark_by_total_return_net: "
+        f"{report['best_benchmark_by_total_return_net']['strategy_name']} "
+        f"({_format_metric(report['best_benchmark_by_total_return_net']['total_return_net'])})"
+    )
+
+    table_frame = pd.DataFrame(report["table_rows"])
+    if not table_frame.empty:
+        print("comparison_table:")
+        print(table_frame.to_string(index=False))
+
+    artifact_paths = report["artifacts"]
+    print(f"comparison_summary_exists: {Path(artifact_paths['summary_path']).exists()}")
+    print(f"comparison_table_exists: {Path(artifact_paths['table_path']).exists()}")
+    return 0
+
+
 def _print_metrics(metrics: dict[str, float | None]) -> None:
     for name in METRIC_NAMES:
         print(f"  {name}: {_format_metric(metrics.get(name))}")
@@ -785,6 +988,20 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "backtest-show":
         return run_backtest_show(
+            model_name=args.model,
+            top_k=args.top_k,
+            holding_days=args.holding_days,
+            cost_bps_per_side=args.cost_bps_per_side,
+        )
+    if args.command == "backtest-compare":
+        return run_backtest_compare(
+            model_name=args.model,
+            top_k=args.top_k,
+            holding_days=args.holding_days,
+            cost_bps_per_side=args.cost_bps_per_side,
+        )
+    if args.command == "backtest-compare-show":
+        return run_backtest_compare_show(
             model_name=args.model,
             top_k=args.top_k,
             holding_days=args.holding_days,

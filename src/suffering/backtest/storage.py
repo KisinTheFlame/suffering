@@ -15,6 +15,7 @@ class BacktestStorage:
     def __init__(self, artifacts_dir: Path) -> None:
         self.artifacts_dir = artifacts_dir
         self.backtests_dir = self.artifacts_dir / "backtests"
+        self.comparisons_dir = self.backtests_dir / "comparisons"
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "BacktestStorage":
@@ -164,6 +165,192 @@ class BacktestStorage:
             self.trades_path(model_name, top_k, holding_days, cost_bps_per_side)
         )
 
+    def comparison_summary_path(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+    ) -> Path:
+        stem = self._backtest_stem(model_name, top_k, holding_days, cost_bps_per_side)
+        return self.comparisons_dir / f"{stem}_comparison_summary.json"
+
+    def comparison_table_path(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+    ) -> Path:
+        stem = self._backtest_stem(model_name, top_k, holding_days, cost_bps_per_side)
+        return self.comparisons_dir / f"{stem}_comparison_table.csv"
+
+    def comparison_daily_returns_path(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+    ) -> Path:
+        stem = self._comparison_strategy_stem(
+            model_name,
+            top_k,
+            holding_days,
+            cost_bps_per_side,
+            strategy_name,
+        )
+        return self.comparisons_dir / f"{stem}_daily_returns.csv"
+
+    def comparison_equity_curve_path(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+    ) -> Path:
+        stem = self._comparison_strategy_stem(
+            model_name,
+            top_k,
+            holding_days,
+            cost_bps_per_side,
+            strategy_name,
+        )
+        return self.comparisons_dir / f"{stem}_equity_curve.csv"
+
+    def comparison_trades_path(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+    ) -> Path:
+        stem = self._comparison_strategy_stem(
+            model_name,
+            top_k,
+            holding_days,
+            cost_bps_per_side,
+            strategy_name,
+        )
+        return self.comparisons_dir / f"{stem}_trades.csv"
+
+    def write_comparison_summary(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        summary: dict[str, Any],
+    ) -> Path:
+        path = self.comparison_summary_path(model_name, top_k, holding_days, cost_bps_per_side)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(summary, file, ensure_ascii=False, indent=2)
+        return path
+
+    def read_comparison_summary(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+    ) -> dict[str, Any]:
+        path = self.comparison_summary_path(model_name, top_k, holding_days, cost_bps_per_side)
+        if not path.exists():
+            raise FileNotFoundError(
+                "Backtest comparison summary not found for "
+                f"{model_name} top_k={top_k} holding_days={holding_days} "
+                f"cost_bps_per_side={cost_bps_per_side}"
+            )
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(file)
+
+    def write_comparison_table(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        frame: pd.DataFrame,
+    ) -> Path:
+        return self._write_frame(
+            self.comparison_table_path(model_name, top_k, holding_days, cost_bps_per_side),
+            frame,
+        )
+
+    def read_comparison_table(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+    ) -> pd.DataFrame:
+        return self._read_frame(
+            self.comparison_table_path(model_name, top_k, holding_days, cost_bps_per_side)
+        )
+
+    def write_comparison_daily_returns(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+        frame: pd.DataFrame,
+    ) -> Path:
+        return self._write_frame(
+            self.comparison_daily_returns_path(
+                model_name,
+                top_k,
+                holding_days,
+                cost_bps_per_side,
+                strategy_name,
+            ),
+            frame,
+        )
+
+    def write_comparison_equity_curve(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+        frame: pd.DataFrame,
+    ) -> Path:
+        return self._write_frame(
+            self.comparison_equity_curve_path(
+                model_name,
+                top_k,
+                holding_days,
+                cost_bps_per_side,
+                strategy_name,
+            ),
+            frame,
+        )
+
+    def write_comparison_trades(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+        frame: pd.DataFrame,
+    ) -> Path:
+        return self._write_frame(
+            self.comparison_trades_path(
+                model_name,
+                top_k,
+                holding_days,
+                cost_bps_per_side,
+                strategy_name,
+            ),
+            frame,
+        )
+
     def _write_frame(self, path: Path, frame: pd.DataFrame) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         output = frame.copy()
@@ -194,3 +381,14 @@ class BacktestStorage:
         else:
             cost_suffix = str(round_trip_cost_bps).replace(".", "p")
         return f"{model_name}_top{top_k}_h{holding_days}_cost{cost_suffix}"
+
+    def _comparison_strategy_stem(
+        self,
+        model_name: str,
+        top_k: int,
+        holding_days: int,
+        cost_bps_per_side: float,
+        strategy_name: str,
+    ) -> str:
+        base_stem = self._backtest_stem(model_name, top_k, holding_days, cost_bps_per_side)
+        return f"{base_stem}_{strategy_name}"
