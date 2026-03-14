@@ -10,6 +10,8 @@ from suffering import PROJECT_NAME, __version__
 from suffering.config.settings import get_settings
 from suffering.data import build_data_service, get_default_universe
 from suffering.data.universe import resolve_symbols
+from suffering.features import build_feature_service
+from suffering.features.definitions import FEATURE_COLUMNS
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +47,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show cached daily stock data for one symbol.",
     )
     data_show_parser.add_argument("symbol", help="Ticker symbol such as AAPL")
+
+    feature_build_parser = subparsers.add_parser(
+        "feature-build",
+        help="Build daily feature tables from cached raw data.",
+    )
+    feature_build_parser.add_argument(
+        "symbols",
+        nargs="*",
+        help="Ticker symbols such as AAPL MSFT",
+    )
+
+    feature_show_parser = subparsers.add_parser(
+        "feature-show",
+        help="Show cached daily features for one symbol.",
+    )
+    feature_show_parser.add_argument("symbol", help="Ticker symbol such as AAPL")
     return parser
 
 
@@ -63,8 +81,8 @@ def run_doctor() -> int:
     print(f"default_symbols: {', '.join(get_default_universe(settings))}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
-        "status: minimal data layer available; "
-        "features/training/backtest are not implemented yet"
+        "status: minimal data and feature layers available; "
+        "label/training/backtest are not implemented yet"
     )
     return 0
 
@@ -114,6 +132,50 @@ def run_data_show(symbol: str) -> int:
     return 0
 
 
+def run_feature_build(symbols: list[str]) -> int:
+    settings = get_settings()
+    service = build_feature_service(settings)
+    resolved_symbols = resolve_symbols(symbols, settings)
+    failed_symbols: list[str] = []
+
+    print(f"building daily features for {len(resolved_symbols)} symbol(s) ...")
+    for symbol in resolved_symbols:
+        try:
+            frame = service.build_features_for_symbol(symbol)
+        except FileNotFoundError as exc:
+            failed_symbols.append(symbol)
+            print(f"{symbol}: {exc}")
+            continue
+
+        path = service.storage.path_for_symbol(symbol)
+        print(
+            f"{symbol}: {len(frame)} rows, {len(FEATURE_COLUMNS)} feature columns cached at {path}"
+        )
+
+    return 1 if failed_symbols else 0
+
+
+def run_feature_show(symbol: str) -> int:
+    service = build_feature_service()
+    try:
+        frame = service.read_features(symbol)
+    except FileNotFoundError:
+        print(
+            f"cached features not found for {symbol.upper()}. "
+            f"Run `suffering feature-build {symbol.upper()}` first."
+        )
+        return 1
+
+    print(f"symbol: {symbol.upper()}")
+    print(f"rows: {len(frame)}")
+    print(f"feature_columns: {', '.join(FEATURE_COLUMNS)}")
+    print("head:")
+    print(frame.head().to_string(index=False))
+    print("tail:")
+    print(frame.tail().to_string(index=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -128,6 +190,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "data-show":
         return run_data_show(symbol=args.symbol)
+    if args.command == "feature-build":
+        return run_feature_build(symbols=args.symbols)
+    if args.command == "feature-show":
+        return run_feature_show(symbol=args.symbol)
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")
