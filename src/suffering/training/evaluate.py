@@ -10,21 +10,23 @@ from suffering.data.models import DATE_COLUMN, SYMBOL_COLUMN
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.training.baseline import PREDICTION_COLUMN
 
+METRIC_NAMES = (
+    "mae",
+    "rmse",
+    "overall_spearman_corr",
+    "daily_rank_ic_mean",
+    "daily_rank_ic_std",
+    "top_5_mean_future_return",
+    "top_10_mean_future_return",
+)
+
 
 def evaluate_predictions(frame: pd.DataFrame) -> dict[str, float | None]:
     valid = frame.loc[
         frame[FUTURE_RETURN_5D_COLUMN].notna() & frame[PREDICTION_COLUMN].notna()
     ].copy()
     if valid.empty:
-        return {
-            "mae": None,
-            "rmse": None,
-            "overall_spearman_corr": None,
-            "daily_rank_ic_mean": None,
-            "daily_rank_ic_std": None,
-            "top_5_mean_future_return": None,
-            "top_10_mean_future_return": None,
-        }
+        return {name: None for name in METRIC_NAMES}
 
     absolute_error = (valid[FUTURE_RETURN_5D_COLUMN] - valid[PREDICTION_COLUMN]).abs()
     squared_error = (valid[FUTURE_RETURN_5D_COLUMN] - valid[PREDICTION_COLUMN]) ** 2
@@ -42,6 +44,36 @@ def evaluate_predictions(frame: pd.DataFrame) -> dict[str, float | None]:
         "top_5_mean_future_return": _top_k_mean_future_return(valid, top_k=5),
         "top_10_mean_future_return": _top_k_mean_future_return(valid, top_k=10),
     }
+
+
+def summarize_metric_collection(
+    metrics_collection: list[dict[str, float | None]],
+) -> dict[str, dict[str, float | None]]:
+    summary: dict[str, dict[str, float | None]] = {}
+    for metric_name in METRIC_NAMES:
+        values = [
+            value
+            for item in metrics_collection
+            for value in [item.get(metric_name)]
+            if value is not None
+        ]
+        if not values:
+            summary[metric_name] = {
+                "mean": None,
+                "std": None,
+                "min": None,
+                "max": None,
+            }
+            continue
+
+        series = pd.Series(values, dtype="float64")
+        summary[metric_name] = {
+            "mean": float(series.mean()),
+            "std": float(series.std(ddof=0)),
+            "min": float(series.min()),
+            "max": float(series.max()),
+        }
+    return summary
 
 
 def _daily_rank_ic_series(frame: pd.DataFrame) -> pd.Series:

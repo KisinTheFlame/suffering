@@ -1,8 +1,8 @@
 # suffering
 
-`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环。
+`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮则在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset，以及一个基于 `HistGradientBoostingRegressor` 的 baseline 训练闭环。但仍然不包含 LTR/XGBoost/LightGBM、滚动时间验证、正式回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层和标签层都还不稳定，就过早引入更复杂的训练与回测，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、一个基于 `HistGradientBoostingRegressor` 的 baseline 训练闭环，以及一个更严格的 walk-forward 时间验证闭环。但仍然不包含 LTR/XGBoost/LightGBM、正式回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层和标签层都还不稳定，就过早引入更复杂的训练与回测，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -240,18 +240,14 @@ data/datasets/daily/panel_5d.csv
 
 其中 `relevance_5d_5q` 的含义是：对每个交易日，基于当日所有 symbol 的 `future_return_5d` 做横截面排序，再划成最多 5 桶，最差桶记为 `0`。如果某日可用 symbol 数太少，桶数会自然退化，但流程仍然保持稳定可复现。
 
-## 第五轮已支持的最小训练闭环
+## 第五轮与第六轮已支持的训练闭环
 
-第五轮开始，仓库已经可以直接在已缓存的 `panel_5d` dataset 上完成一次最小 baseline 训练闭环。当前目标不是追求最强模型，而是先验证下面这条链路可以稳定跑通：
+当前仓库已经可以直接在已缓存的 `panel_5d` dataset 上完成两层最小训练闭环：
 
-- dataset cache 存在
-- 按唯一交易日做单次时间顺序切分
-- 使用 baseline 回归模型训练
-- 生成 validation / test 预测
-- 计算最小回归指标和排序质量指标
-- 把模型、预测和评估报告落盘
+- 第五轮：单次时间顺序切分的 baseline 训练
+- 第六轮：更严格的 walk-forward / rolling 时间验证
 
-这轮 baseline 模型固定为：
+这两层闭环都继续使用同一个 baseline 模型：
 
 - `scikit-learn` 的 `HistGradientBoostingRegressor`
 
@@ -260,8 +256,8 @@ data/datasets/daily/panel_5d.csv
 - 只使用数值特征
 - 明确排除 `date`、`symbol`、`future_return_5d`、`relevance_5d_5q`
 - 固定预测目标为 `future_return_5d`
-- 按日期做单次 `60% train / 20% validation / 20% test` 时间切分
-- 不做 shuffle，不做 k-fold，不做 rolling / walk-forward
+- 不做 shuffle，不做随机切分
+- 复用同一套最小评估指标和 artifacts 风格
 
 当前会输出的评估指标包括：
 
@@ -269,6 +265,15 @@ data/datasets/daily/panel_5d.csv
 - 排序指标：`overall_spearman_corr`
 - 按日 rank IC：`daily_rank_ic_mean`、`daily_rank_ic_std`
 - 朴素 top-k 指标：`top_5_mean_future_return`、`top_10_mean_future_return`
+
+### 单次时间切分
+
+单次 baseline 训练仍然保留第五轮的实现：
+
+- 按唯一交易日做一次 `60% train / 20% validation / 20% test` 时间切分
+- 训练一次 baseline
+- 生成 validation / test 预测
+- 输出单次切分对应的 metrics report
 
 训练产物默认会写到：
 
@@ -279,7 +284,33 @@ artifacts/predictions/baseline_hist_gbr_validation.csv
 artifacts/predictions/baseline_hist_gbr_test.csv
 ```
 
-## 从 raw data 到 baseline 训练
+### 第六轮 walk-forward 如何工作
+
+第六轮新增的 walk-forward 验证继续基于唯一交易日顺序工作，但不再只做一次切分。当前实现保持朴素：
+
+- 先按唯一交易日排序
+- 默认用 `20% validation / 20% test`
+- train 使用当前 fold 之前全部可用历史日期
+- 按 test window 的长度向前滚动
+- 每个 fold 都满足 `train < validation < test`
+- 日期不重叠，不 shuffle，不随机抽样
+
+它和单次切分训练的区别很直接：
+
+- 单次切分只会得到一组 validation / test 结果
+- walk-forward 会得到多组时间上连续前滚的 test 结果
+- 汇总结果会按 fold 统计 mean / std / min / max
+- test 预测会按 `fold_id + date + symbol` 拼接成一张总表，便于后续继续接更正式的组合评估
+
+walk-forward 产物默认会写到：
+
+```text
+artifacts/reports/baseline_hist_gbr_walkforward_summary.json
+artifacts/reports/baseline_hist_gbr_walkforward_folds.csv
+artifacts/predictions/baseline_hist_gbr_walkforward_test_predictions.csv
+```
+
+## 从 raw data 到 walk-forward 验证
 
 下面是一条当前可用的最小闭环命令链：
 
@@ -290,6 +321,8 @@ uv run suffering label-build
 uv run suffering dataset-build
 uv run suffering train-baseline
 uv run suffering train-show
+uv run suffering train-walkforward
+uv run suffering train-walkforward-show
 ```
 
 如果你想看某一步缓存内容，也可以分别执行：
@@ -309,12 +342,21 @@ uv run suffering dataset-show
 - validation / test 的主要指标
 - 模型、预测和报告保存路径
 
-`train-show` 会读取已保存的 metrics report，并检查模型文件、预测文件是否存在。
+`train-walkforward` 会打印：
+
+- dataset 名称
+- fold 数
+- 每个 fold 的 train / validation / test 日期范围
+- 汇总后的主要 test 指标均值
+- summary / folds / predictions 的保存路径
+
+`train-show` 会读取已保存的单次切分 metrics report，并检查模型文件、预测文件是否存在。
+
+`train-walkforward-show` 会读取已保存的 walk-forward summary report，并检查 folds / predictions 产物是否存在。
 
 ## 当前仍然不支持
 
 - LTR / XGBoost / LightGBM / CatBoost
-- 滚动时间验证、walk-forward、expanding window
 - 超参数搜索
 - 正式回测、累计收益曲线、交易成本、仓位管理
 - benchmark 对比
@@ -330,9 +372,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 最小 baseline 训练闭环”。下一轮可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + baseline 单次切分训练闭环 + 最小 walk-forward 验证闭环”。下一轮可以按下面的方向逐步扩展：
 
-- `training`：更合理的时间验证与更稳健的训练评估
+- `training`：在这套更严格时间验证之上接入更强模型，例如 `XGBoost`
 - `ranking`：接 ranking 模型与更贴近排序目标的训练方式
 - `backtest`：实现更正式的组合评估、持仓模拟与指标汇总
 

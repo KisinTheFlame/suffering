@@ -23,6 +23,6 @@ def test_cli_main_can_be_called(capsys) -> None:
     assert exit_code == 0
     assert "project: suffering" in captured.out
     assert (
-        "minimal data, feature, label, dataset, and baseline training layers available"
+        "minimal data, feature, label, dataset, baseline training, and walk-forward"
         in captured.out
     )

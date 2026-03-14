@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from suffering.data.models import DATE_COLUMN
+from suffering.data.models import DATE_COLUMN, SYMBOL_COLUMN
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,19 @@ class PanelDatasetSplit:
     train_frame: pd.DataFrame
     validation_frame: pd.DataFrame
     test_frame: pd.DataFrame
+
+
+def build_frame_date_summary(frame: pd.DataFrame) -> dict[str, int | str | None]:
+    if frame.empty:
+        return {"rows": 0, "date_count": 0, "date_start": None, "date_end": None}
+
+    dates = pd.to_datetime(frame[DATE_COLUMN]).dt.tz_localize(None).dt.normalize()
+    return {
+        "rows": int(len(frame)),
+        "date_count": int(dates.nunique()),
+        "date_start": dates.min().date().isoformat(),
+        "date_end": dates.max().date().isoformat(),
+    }
 
 
 def split_panel_dataset_by_date(
@@ -97,7 +110,8 @@ def _validate_ordered_dates(
 
 
 def _slice_frame_by_dates(frame: pd.DataFrame, dates: pd.Index) -> pd.DataFrame:
-    return frame.loc[frame[DATE_COLUMN].isin(dates)].sort_values(
-        [DATE_COLUMN, "symbol"],
-        kind="stable",
-    ).reset_index(drop=True)
+    return (
+        frame.loc[frame[DATE_COLUMN].isin(dates)]
+        .sort_values([DATE_COLUMN, SYMBOL_COLUMN], kind="stable")
+        .reset_index(drop=True)
+    )

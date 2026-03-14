@@ -33,6 +33,15 @@ class TrainingStorage:
     def prediction_path(self, model_name: str, split_name: str) -> Path:
         return self.predictions_dir / f"{model_name}_{split_name}.csv"
 
+    def walkforward_summary_path(self, model_name: str) -> Path:
+        return self.reports_dir / f"{model_name}_walkforward_summary.json"
+
+    def walkforward_folds_path(self, model_name: str) -> Path:
+        return self.reports_dir / f"{model_name}_walkforward_folds.csv"
+
+    def walkforward_predictions_path(self, model_name: str) -> Path:
+        return self.predictions_dir / f"{model_name}_walkforward_test_predictions.csv"
+
     def write_model(self, model_name: str, model: Any) -> Path:
         path = self.model_path(model_name)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +63,22 @@ class TrainingStorage:
         with path.open("r", encoding="utf-8") as file:
             return json.load(file)
 
+    def write_walkforward_summary(self, model_name: str, report: dict[str, Any]) -> Path:
+        path = self.walkforward_summary_path(model_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(report, file, ensure_ascii=False, indent=2)
+        return path
+
+    def read_walkforward_summary(self, model_name: str) -> dict[str, Any]:
+        path = self.walkforward_summary_path(model_name)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Walk-forward summary report not found for model: {model_name}"
+            )
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(file)
+
     def write_predictions(
         self,
         model_name: str,
@@ -61,6 +86,17 @@ class TrainingStorage:
         frame: pd.DataFrame,
     ) -> Path:
         path = self.prediction_path(model_name, split_name)
+        return self._write_frame(path, frame)
+
+    def write_walkforward_folds(self, model_name: str, frame: pd.DataFrame) -> Path:
+        path = self.walkforward_folds_path(model_name)
+        return self._write_frame(path, frame)
+
+    def write_walkforward_predictions(self, model_name: str, frame: pd.DataFrame) -> Path:
+        path = self.walkforward_predictions_path(model_name)
+        return self._write_frame(path, frame)
+
+    def _write_frame(self, path: Path, frame: pd.DataFrame) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         output = frame.copy()
         if "date" in output.columns:

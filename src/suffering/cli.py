@@ -16,6 +16,7 @@ from suffering.ranking import build_ranking_service
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
 from suffering.training import build_training_service
+from suffering.training.evaluate import METRIC_NAMES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,6 +123,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--model-name",
         help="Model artifact name, defaulting to the configured baseline model name.",
     )
+
+    train_walkforward_parser = subparsers.add_parser(
+        "train-walkforward",
+        help="Run minimal walk-forward validation on a cached panel dataset.",
+    )
+    train_walkforward_parser.add_argument(
+        "--dataset-name",
+        help="Dataset cache name, defaulting to the configured panel dataset name.",
+    )
+    train_walkforward_parser.add_argument(
+        "--model-name",
+        help="Model artifact name, defaulting to the configured baseline model name.",
+    )
+
+    train_walkforward_show_parser = subparsers.add_parser(
+        "train-walkforward-show",
+        help="Show the most recent saved walk-forward validation report.",
+    )
+    train_walkforward_show_parser.add_argument(
+        "--model-name",
+        help="Model artifact name, defaulting to the configured baseline model name.",
+    )
     return parser
 
 
@@ -140,8 +163,8 @@ def run_doctor() -> int:
     print(f"default_symbols: {', '.join(get_default_universe(settings))}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
-        "status: minimal data, feature, label, dataset, and baseline training layers available; "
-        "formal backtest is not implemented yet"
+        "status: minimal data, feature, label, dataset, baseline training, and walk-forward "
+        "validation layers available; formal backtest is not implemented yet"
     )
     return 0
 
@@ -345,8 +368,7 @@ def run_train_baseline(dataset_name: str | None, model_name: str | None) -> int:
         split_summary = summary["split_summary"][split_name]
         print(f"{split_name}_rows: {split_summary['rows']}")
         print(
-            f"{split_name}_date_range: "
-            f"{split_summary['date_start']} -> {split_summary['date_end']}"
+            f"{split_name}_date_range: {split_summary['date_start']} -> {split_summary['date_end']}"
         )
 
     print("validation_metrics:")
@@ -382,8 +404,7 @@ def run_train_show(model_name: str | None) -> int:
         split_summary = report["split_summary"][split_name]
         print(f"{split_name}_rows: {split_summary['rows']}")
         print(
-            f"{split_name}_date_range: "
-            f"{split_summary['date_start']} -> {split_summary['date_end']}"
+            f"{split_name}_date_range: {split_summary['date_start']} -> {split_summary['date_end']}"
         )
 
     print("validation_metrics:")
@@ -402,17 +423,98 @@ def run_train_show(model_name: str | None) -> int:
     return 0
 
 
+def run_train_walkforward(dataset_name: str | None, model_name: str | None) -> int:
+    settings = get_settings()
+    service = build_training_service(settings)
+    resolved_dataset_name = dataset_name or settings.default_dataset_name
+    resolved_model_name = model_name or settings.default_model_name
+
+    try:
+        summary = service.train_walkforward(
+            dataset_name=resolved_dataset_name,
+            model_name=resolved_model_name,
+        )
+    except FileNotFoundError:
+        print(
+            f"cached dataset not found: {resolved_dataset_name}. "
+            f"Run `suffering dataset-build --dataset-name {resolved_dataset_name}` first."
+        )
+        return 1
+    except ValueError as exc:
+        print(f"walk-forward validation failed: {exc}")
+        return 1
+
+    print(f"dataset: {summary['dataset_name']}")
+    print(f"model: {summary['model_name']}")
+    print(f"rows: {summary['total_rows']}")
+    print(f"date_count: {summary['date_count']}")
+    print(f"feature_count: {summary['feature_count']}")
+    print(f"feature_columns: {', '.join(summary['feature_columns'])}")
+    print(f"fold_count: {summary['fold_count']}")
+
+    for fold in summary["folds"]:
+        print(
+            f"fold_{fold['fold_id']}_date_range: "
+            f"train {fold['train_date_start']} -> {fold['train_date_end']}, "
+            f"validation {fold['validation_date_start']} -> {fold['validation_date_end']}, "
+            f"test {fold['test_date_start']} -> {fold['test_date_end']}"
+        )
+
+    if summary["notes"]:
+        for note in summary["notes"]:
+            print(f"note: {note}")
+
+    print("walkforward_test_metric_means:")
+    _print_metric_summary_means(summary["test_metrics_summary"])
+    print(f"summary_path: {summary['artifacts']['summary_path']}")
+    print(f"folds_path: {summary['artifacts']['folds_path']}")
+    print(f"predictions_path: {summary['artifacts']['predictions_path']}")
+    return 0
+
+
+def run_train_walkforward_show(model_name: str | None) -> int:
+    settings = get_settings()
+    service = build_training_service(settings)
+    resolved_model_name = model_name or settings.default_model_name
+
+    try:
+        report = service.read_walkforward_report(model_name=resolved_model_name)
+    except FileNotFoundError:
+        print(
+            f"walk-forward report not found for model: {resolved_model_name}. "
+            f"Run `suffering train-walkforward` first."
+        )
+        return 1
+
+    print(f"model: {report['model_name']}")
+    print(f"dataset: {report['dataset_name']}")
+    print(f"feature_count: {report['feature_count']}")
+    print(f"fold_count: {report['fold_count']}")
+    if report["notes"]:
+        for note in report["notes"]:
+            print(f"note: {note}")
+
+    print("walkforward_test_metric_means:")
+    _print_metric_summary_means(report["test_metrics_summary"])
+
+    artifact_paths = report["artifacts"]
+    print(f"summary_exists: {Path(artifact_paths['summary_path']).exists()}")
+    print(f"folds_exists: {Path(artifact_paths['folds_path']).exists()}")
+    print(f"predictions_exists: {Path(artifact_paths['predictions_path']).exists()}")
+    return 0
+
+
 def _print_metrics(metrics: dict[str, float | None]) -> None:
-    for name in (
-        "mae",
-        "rmse",
-        "overall_spearman_corr",
-        "daily_rank_ic_mean",
-        "daily_rank_ic_std",
-        "top_5_mean_future_return",
-        "top_10_mean_future_return",
-    ):
+    for name in METRIC_NAMES:
         print(f"  {name}: {_format_metric(metrics.get(name))}")
+
+
+def _print_metric_summary_means(
+    metrics_summary: dict[str, dict[str, float | None]],
+) -> None:
+    for name in METRIC_NAMES:
+        metric_summary = metrics_summary.get(name, {})
+        print(f"  {name}: {_format_metric(metric_summary.get('mean'))}")
 
 
 def _format_metric(value: float | None) -> str:
@@ -449,6 +551,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_train_baseline(dataset_name=args.dataset_name, model_name=args.model_name)
     if args.command == "train-show":
         return run_train_show(model_name=args.model_name)
+    if args.command == "train-walkforward":
+        return run_train_walkforward(dataset_name=args.dataset_name, model_name=args.model_name)
+    if args.command == "train-walkforward-show":
+        return run_train_walkforward_show(model_name=args.model_name)
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")

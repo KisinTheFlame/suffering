@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     default_train_ratio: float = 0.6
     default_validation_ratio: float = 0.2
     default_test_ratio: float = 0.2
+    walkforward_step_ratio: float = 0.2
+    walkforward_min_folds: int = 1
     random_seed: int = 7
     default_model_name: str = "baseline_hist_gbr"
 
@@ -44,6 +46,7 @@ class Settings(BaseSettings):
         "default_train_ratio",
         "default_validation_ratio",
         "default_test_ratio",
+        "walkforward_step_ratio",
     )
     @classmethod
     def validate_ratio_range(cls, value: float) -> float:
@@ -51,17 +54,21 @@ class Settings(BaseSettings):
             raise ValueError("split ratios must be between 0 and 1")
         return value
 
+    @field_validator("walkforward_min_folds")
+    @classmethod
+    def validate_walkforward_min_folds(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("walkforward_min_folds must be at least 1")
+        return value
+
     @model_validator(mode="after")
     def validate_split_ratio_sum(self) -> "Settings":
         ratio_sum = (
-            self.default_train_ratio
-            + self.default_validation_ratio
-            + self.default_test_ratio
+            self.default_train_ratio + self.default_validation_ratio + self.default_test_ratio
         )
         if abs(ratio_sum - 1.0) > 1e-9:
             raise ValueError(
-                "default_train_ratio + default_validation_ratio + "
-                "default_test_ratio must equal 1.0"
+                "default_train_ratio + default_validation_ratio + default_test_ratio must equal 1.0"
             )
         return self
 
