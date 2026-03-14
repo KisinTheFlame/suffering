@@ -13,6 +13,7 @@ def test_settings_can_be_created() -> None:
     assert settings.app_env
     assert settings.data_dir
     assert get_settings().artifacts_dir
+    assert settings.default_data_provider == "yfinance"
 
 
 def test_cli_main_can_be_called(capsys) -> None:
@@ -21,4 +22,4 @@ def test_cli_main_can_be_called(capsys) -> None:
 
     assert exit_code == 0
     assert "project: suffering" in captured.out
-    assert "project skeleton initialized" in captured.out
+    assert "minimal data layer available" in captured.out

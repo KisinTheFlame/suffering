@@ -9,8 +9,10 @@ description = "A lightweight, iterative Python quant research project skeleton."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "pandas>=2.2,<3.0",
     "pydantic-settings>=2.4,<3.0",
     "python-dotenv>=1.0,<2.0",
+    "yfinance>=0.2.54,<0.3",
 ]
 
 [project.scripts]
@@ -31,4 +33,3 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-
