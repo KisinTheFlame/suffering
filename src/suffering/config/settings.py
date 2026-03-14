@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     walkforward_min_folds: int = 1
     random_seed: int = 7
     default_training_model: str = "hist_gbr"
+    default_backtest_model: str = "xgb_ranker"
+    default_top_k: int = 5
+    default_holding_days: int = 5
+    default_cost_bps_per_side: float = 5.0
     xgb_n_estimators: int = 100
     xgb_max_depth: int = 4
     xgb_learning_rate: float = 0.05
@@ -75,6 +79,13 @@ class Settings(BaseSettings):
     def validate_walkforward_min_folds(cls, value: int) -> int:
         if value < 1:
             raise ValueError("walkforward_min_folds must be at least 1")
+        return value
+
+    @field_validator("default_top_k", "default_holding_days")
+    @classmethod
+    def validate_positive_defaults(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("backtest integer defaults must be at least 1")
         return value
 
     @field_validator(

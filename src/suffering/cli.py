@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from suffering import PROJECT_NAME, __version__
+from suffering.backtest import build_backtest_service
 from suffering.config.settings import get_settings
 from suffering.data import build_data_service, get_default_universe
 from suffering.data.universe import resolve_symbols
@@ -181,6 +182,60 @@ def build_parser() -> argparse.ArgumentParser:
         dest="model",
         help=argparse.SUPPRESS,
     )
+
+    backtest_walkforward_parser = subparsers.add_parser(
+        "backtest-walkforward",
+        help="Build a minimal overlapping portfolio from walk-forward test predictions.",
+    )
+    backtest_walkforward_parser.add_argument(
+        "--model",
+        help=(
+            "Backtest model name, defaulting to the configured backtest model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    backtest_walkforward_parser.add_argument(
+        "--top-k",
+        type=int,
+        help="Number of names selected per signal date.",
+    )
+    backtest_walkforward_parser.add_argument(
+        "--holding-days",
+        type=int,
+        help="Holding window in trading days.",
+    )
+    backtest_walkforward_parser.add_argument(
+        "--cost-bps-per-side",
+        type=float,
+        help="Single-side transaction cost in basis points.",
+    )
+
+    backtest_show_parser = subparsers.add_parser(
+        "backtest-show",
+        help="Show a saved minimal backtest summary.",
+    )
+    backtest_show_parser.add_argument(
+        "--model",
+        help=(
+            "Backtest model name, defaulting to the configured backtest model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    backtest_show_parser.add_argument(
+        "--top-k",
+        type=int,
+        help="Number of names selected per signal date.",
+    )
+    backtest_show_parser.add_argument(
+        "--holding-days",
+        type=int,
+        help="Holding window in trading days.",
+    )
+    backtest_show_parser.add_argument(
+        "--cost-bps-per-side",
+        type=float,
+        help="Single-side transaction cost in basis points.",
+    )
     return parser
 
 
@@ -197,11 +252,15 @@ def run_doctor() -> int:
     print(f"default_data_provider: {settings.default_data_provider}")
     print(f"default_start_date: {settings.default_start_date}")
     print(f"default_symbols: {', '.join(get_default_universe(settings))}")
+    print(f"default_backtest_model: {settings.default_backtest_model}")
+    print(f"default_top_k: {settings.default_top_k}")
+    print(f"default_holding_days: {settings.default_holding_days}")
+    print(f"default_cost_bps_per_side: {settings.default_cost_bps_per_side}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
         "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor/xgb_ranker "
-        "training, and walk-forward validation layers available; formal backtest is not "
-        "implemented yet"
+        "training, walk-forward validation, and minimal walk-forward portfolio backtest "
+        "layers available; formal production backtest is not implemented yet"
     )
     return 0
 
@@ -551,6 +610,121 @@ def run_train_walkforward_show(model_name: str | None) -> int:
     return 0
 
 
+def run_backtest_walkforward(
+    model_name: str | None,
+    top_k: int | None,
+    holding_days: int | None,
+    cost_bps_per_side: float | None,
+) -> int:
+    settings = get_settings()
+    service = build_backtest_service(settings)
+    resolved_model_name = model_name or settings.default_backtest_model
+
+    try:
+        summary = service.run_walkforward_backtest(
+            model_name=resolved_model_name,
+            top_k=top_k,
+            holding_days=holding_days,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+    except FileNotFoundError as exc:
+        message = str(exc)
+        if "Walk-forward test predictions not found" in message:
+            print(
+                f"{message}. Run `suffering train-walkforward --model {resolved_model_name}` first."
+            )
+        elif "Raw daily cache not found" in message:
+            print(f"{message} If needed, run `suffering data-fetch` first.")
+        else:
+            print(message)
+        return 1
+    except ValueError as exc:
+        print(f"backtest failed: {exc}")
+        return 1
+
+    print(f"model: {summary['model_name']}")
+    print(f"top_k: {summary['top_k']}")
+    print(f"holding_days: {summary['holding_days']}")
+    print(f"cost_bps_per_side: {summary['cost_bps_per_side']}")
+    print(f"round_trip_cost_bps: {summary['round_trip_cost_bps']}")
+    print(f"signal_date_range: {summary['signal_date_start']} -> {summary['signal_date_end']}")
+    print(
+        "portfolio_date_range: "
+        f"{summary['portfolio_date_start']} -> {summary['portfolio_date_end']}"
+    )
+    print(f"trade_count: {summary['trade_count']}")
+    print(f"skipped_trade_count: {summary['skipped_trade_count']}")
+    print(f"gross_total_return: {_format_metric(summary['total_return_gross'])}")
+    print(f"net_total_return: {_format_metric(summary['total_return_net'])}")
+    print(f"gross_sharpe: {_format_metric(summary['sharpe_ratio_gross'])}")
+    print(f"net_sharpe: {_format_metric(summary['sharpe_ratio_net'])}")
+    print(f"gross_max_drawdown: {_format_metric(summary['max_drawdown_gross'])}")
+    print(f"net_max_drawdown: {_format_metric(summary['max_drawdown_net'])}")
+    print(f"summary_path: {summary['artifacts']['summary_path']}")
+    print(f"daily_returns_path: {summary['artifacts']['daily_returns_path']}")
+    print(f"equity_curve_path: {summary['artifacts']['equity_curve_path']}")
+    print(f"trades_path: {summary['artifacts']['trades_path']}")
+    return 0
+
+
+def run_backtest_show(
+    model_name: str | None,
+    top_k: int | None,
+    holding_days: int | None,
+    cost_bps_per_side: float | None,
+) -> int:
+    settings = get_settings()
+    service = build_backtest_service(settings)
+    resolved_model_name = model_name or settings.default_backtest_model
+
+    try:
+        summary = service.read_backtest_summary(
+            model_name=resolved_model_name,
+            top_k=top_k,
+            holding_days=holding_days,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+    except FileNotFoundError:
+        resolved_top_k = top_k if top_k is not None else settings.default_top_k
+        resolved_holding_days = (
+            holding_days if holding_days is not None else settings.default_holding_days
+        )
+        resolved_cost = (
+            float(cost_bps_per_side)
+            if cost_bps_per_side is not None
+            else float(settings.default_cost_bps_per_side)
+        )
+        print(
+            "backtest summary not found for "
+            f"model={resolved_model_name}, top_k={resolved_top_k}, "
+            f"holding_days={resolved_holding_days}, cost_bps_per_side={resolved_cost}. "
+            "Run `suffering backtest-walkforward` first."
+        )
+        return 1
+    except ValueError as exc:
+        print(f"backtest summary failed: {exc}")
+        return 1
+
+    print(f"model: {summary['model_name']}")
+    print(f"top_k: {summary['top_k']}")
+    print(f"holding_days: {summary['holding_days']}")
+    print(f"cost_bps_per_side: {summary['cost_bps_per_side']}")
+    print(f"trade_count: {summary['trade_count']}")
+    print(f"gross_total_return: {_format_metric(summary['total_return_gross'])}")
+    print(f"net_total_return: {_format_metric(summary['total_return_net'])}")
+    print(f"gross_sharpe: {_format_metric(summary['sharpe_ratio_gross'])}")
+    print(f"net_sharpe: {_format_metric(summary['sharpe_ratio_net'])}")
+    print(f"gross_max_drawdown: {_format_metric(summary['max_drawdown_gross'])}")
+    print(f"net_max_drawdown: {_format_metric(summary['max_drawdown_net'])}")
+
+    artifact_paths = summary["artifacts"]
+    print(f"summary_exists: {Path(artifact_paths['summary_path']).exists()}")
+    print(f"daily_returns_exists: {Path(artifact_paths['daily_returns_path']).exists()}")
+    print(f"equity_curve_exists: {Path(artifact_paths['equity_curve_path']).exists()}")
+    print(f"trades_exists: {Path(artifact_paths['trades_path']).exists()}")
+    return 0
+
+
 def _print_metrics(metrics: dict[str, float | None]) -> None:
     for name in METRIC_NAMES:
         print(f"  {name}: {_format_metric(metrics.get(name))}")
@@ -602,6 +776,20 @@ def main(argv: list[str] | None = None) -> int:
         return run_train_walkforward(dataset_name=args.dataset_name, model_name=args.model)
     if args.command == "train-walkforward-show":
         return run_train_walkforward_show(model_name=args.model)
+    if args.command == "backtest-walkforward":
+        return run_backtest_walkforward(
+            model_name=args.model,
+            top_k=args.top_k,
+            holding_days=args.holding_days,
+            cost_bps_per_side=args.cost_bps_per_side,
+        )
+    if args.command == "backtest-show":
+        return run_backtest_show(
+            model_name=args.model,
+            top_k=args.top_k,
+            holding_days=args.holding_days,
+            cost_bps_per_side=args.cost_bps_per_side,
+        )
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")

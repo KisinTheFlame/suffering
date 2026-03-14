@@ -1,8 +1,8 @@
 # suffering
 
-`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`。
+`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环，以及一个 ranking 模型训练闭环和更严格的 walk-forward 时间验证闭环。但仍然不包含正式回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环，以及一个只基于样本外 walk-forward test predictions 的最小组合评估层。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -384,10 +384,113 @@ uv run suffering train-walkforward-show --model xgb_ranker
 
 `train-walkforward-show` 会读取指定模型的 walk-forward summary report，并检查 folds / predictions 产物是否存在。
 
+## 第九轮已支持的最小组合评估
+
+第九轮在现有 `walk-forward test predictions` 之上，补上了一个刻意克制的组合评估闭环：
+
+- 只使用 walk-forward 的 `test predictions`
+- 对 ranking 模型统一读取 `score_pred`
+- 对回归模型统一读取 `y_pred`
+- 每个信号日按预测分数降序选择 top-k
+- 信号日 `t` 发信号，在 `t+1` 开盘买入，在 `t+5` 收盘卖出
+- 每个信号日形成一个 cohort，cohort 内等权
+- 组合采用重叠持仓，每个 cohort 固定占总资金的 `1 / holding_days`
+- 使用 raw daily price cache 还原日度 gross / net 收益，而不是直接把 `future_return_5d` 当成整条净值曲线
+
+之所以这轮明确只使用 walk-forward 的 test predictions，是为了尽量保证组合评估建立在样本外信号之上，避免把 train / validation 结果混入后高估策略质量。
+
+### 当前组合规则
+
+当前最小策略定义固定如下：
+
+- 信号来源：`artifacts/predictions/<model>_walkforward_test_predictions.csv`
+- 默认支持：`hist_gbr`、`xgb_regressor`、`xgb_ranker`
+- 选股规则：每个信号日按 signal score 取 top-k
+- 持仓规则：`open[t+1]` 买入，`close[t+5]` 卖出
+- 权重规则：cohort 内等权，cohort 间固定按 `1 / holding_days` 分配
+- 成本规则：默认 `cost_bps_per_side = 5`，即单边 5 bps、往返 10 bps
+
+如果某只股票在持有期内缺少必要 raw price 数据，当前实现会直接跳过这笔 trade，并在 backtest summary 里统计 `skipped_trade_count`。cohort 内剩余可执行股票会重新等权。
+
+### 当前输出内容
+
+最小组合评估现在会输出：
+
+- gross / net daily returns
+- gross / net equity curve
+- trade 明细
+- 组合摘要 summary
+- 一组最小组合级指标
+
+当前 summary 至少包括：
+
+- `total_return_gross`
+- `total_return_net`
+- `annualized_return_gross`
+- `annualized_return_net`
+- `annualized_volatility`
+- `sharpe_ratio_gross`
+- `sharpe_ratio_net`
+- `max_drawdown_gross`
+- `max_drawdown_net`
+- `daily_hit_rate_gross`
+- `daily_hit_rate_net`
+- `average_daily_turnover`
+- `average_active_positions`
+
+artifact 会按参数写到：
+
+```text
+artifacts/backtests/<model>_top5_h5_cost10_summary.json
+artifacts/backtests/<model>_top5_h5_cost10_daily_returns.csv
+artifacts/backtests/<model>_top5_h5_cost10_equity_curve.csv
+artifacts/backtests/<model>_top5_h5_cost10_trades.csv
+```
+
+### 运行最小组合评估
+
+先准备数据、特征、label、dataset 和 walk-forward 预测：
+
+```bash
+uv run suffering data-fetch
+uv run suffering feature-build
+uv run suffering label-build
+uv run suffering dataset-build
+uv run suffering train-walkforward --model xgb_ranker
+```
+
+然后运行最小组合评估：
+
+```bash
+uv run suffering backtest-walkforward --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+uv run suffering backtest-show --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+```
+
+`backtest-walkforward` 会打印模型名、top-k、holding days、成本假设、信号日期范围、组合日期范围、交易笔数、gross / net 总收益、gross / net Sharpe、gross / net max drawdown，以及 summary / daily returns / equity curve / trades 的保存路径。
+
+`backtest-show` 会读取已保存的 summary，并检查 `daily_returns`、`equity_curve`、`trades` 产物是否存在。
+
+### 为什么这还不是正式回测
+
+这一层仍然只是“最小但可信”的组合评估，不是完整生产级回测，原因包括：
+
+- 还没有 benchmark 对比
+- 还没有更细的滑点 / 冲击 / 容量成本模型
+- 还没有行业中性、组合约束、风险模型和风控规则
+- 还没有更完整的现金管理、停牌处理和执行层假设
+
+后续轮次会继续在这套轻量组合评估之上增量补：
+
+- benchmark 对比
+- 更细的成本模型
+- 更丰富的组合约束与风控
+
 ## 当前仍然不支持
 
-- 正式回测、累计收益曲线、交易成本、仓位管理
 - benchmark 对比
+- 复杂正式回测框架
+- 行业中性、风险模型、仓位优化
+- 更细的滑点 / 冲击成本 / 容量模型
 - LightGBM / CatBoost / 多模型 ranking 对比框架
 - 超参数搜索
 - 远程训练 / GPU / Docker / 数据库 / CI / 调度系统
@@ -402,9 +505,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环”。后续可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层”。后续可以按下面的方向逐步扩展：
 
-- `backtest`：在现有 ranking 训练验证框架之上接更正式的组合评估、组合构建与回测
-- `backtest`：补上交易成本、持仓模拟与指标汇总
+- `backtest`：在现有 walk-forward 组合评估之上接 benchmark 对比
+- `backtest`：补上更细的成本模型、组合约束与风控
 
 在这些能力真正落地之前，当前仓库仍然保持小而清晰，避免过早引入复杂抽象。
