@@ -40,7 +40,7 @@ def test_training_service_runs_end_to_end_from_cached_dataset(tmp_path: Path) ->
     summary = service.train_baseline()
 
     assert summary["dataset_name"] == settings.default_dataset_name
-    assert summary["model_name"] == settings.default_model_name
+    assert summary["model_name"] == settings.default_training_model
     assert summary["feature_count"] == 2
     assert Path(summary["artifacts"]["model_path"]).exists()
     assert Path(summary["artifacts"]["metrics_path"]).exists()
@@ -48,5 +48,26 @@ def test_training_service_runs_end_to_end_from_cached_dataset(tmp_path: Path) ->
     assert Path(summary["artifacts"]["test_predictions_path"]).exists()
 
     report = service.read_training_report()
-    assert report["model_name"] == settings.default_model_name
+    assert report["model_name"] == settings.default_training_model
     assert report["test_metrics"]["mae"] is not None
+
+
+def test_training_service_supports_xgb_regressor_end_to_end(tmp_path: Path) -> None:
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        artifacts_dir=tmp_path / "artifacts",
+        default_symbols=["AAPL", "MSFT", "NVDA", "META"],
+        xgb_n_estimators=12,
+    )
+    dataset_frame = build_panel_dataset()
+    ranking_storage = RankingStorage.from_settings(settings)
+    ranking_storage.write_daily_dataset(settings.default_dataset_name, dataset_frame)
+
+    service = TrainingService.from_settings(settings)
+    summary = service.train_baseline(model_name="xgb_regressor")
+
+    assert summary["model_name"] == "xgb_regressor"
+    assert summary["validation_metrics"]["mae"] is not None
+    assert summary["test_metrics"]["rmse"] is not None
+    assert Path(summary["artifacts"]["model_path"]).name == "xgb_regressor.pkl"
+    assert Path(summary["artifacts"]["metrics_path"]).name == "xgb_regressor_metrics.json"

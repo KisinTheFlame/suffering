@@ -6,14 +6,16 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from suffering.config.settings import Settings
 from suffering.data.models import DATE_COLUMN, SYMBOL_COLUMN
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.training.baseline import (
     PREDICTION_COLUMN,
     select_numeric_feature_columns,
-    train_hist_gradient_boosting_baseline,
+    train_baseline_regressor,
 )
 from suffering.training.evaluate import evaluate_predictions, summarize_metric_collection
+from suffering.training.models import resolve_model_name
 from suffering.training.splits import build_frame_date_summary
 
 
@@ -109,9 +111,33 @@ def run_walkforward_baseline(
     validation_ratio: float,
     test_ratio: float,
     step_ratio: float,
+    settings: Settings | None = None,
     random_state: int = 7,
     min_folds: int = 1,
 ) -> WalkForwardTrainingResult:
+    return run_walkforward_training(
+        frame=frame,
+        validation_ratio=validation_ratio,
+        test_ratio=test_ratio,
+        step_ratio=step_ratio,
+        model_name="hist_gbr",
+        settings=settings,
+        random_state=random_state,
+        min_folds=min_folds,
+    )
+
+
+def run_walkforward_training(
+    frame: pd.DataFrame,
+    validation_ratio: float,
+    test_ratio: float,
+    step_ratio: float,
+    model_name: str = "hist_gbr",
+    settings: Settings | None = None,
+    random_state: int = 7,
+    min_folds: int = 1,
+) -> WalkForwardTrainingResult:
+    resolved_model_name = resolve_model_name(model_name=model_name, settings=settings)
     feature_columns = select_numeric_feature_columns(frame)
     if not feature_columns:
         raise ValueError("No numeric feature columns available for walk-forward baseline training")
@@ -127,11 +153,13 @@ def run_walkforward_baseline(
     fold_results: list[WalkForwardFoldResult] = []
     combined_predictions: list[pd.DataFrame] = []
     for fold in folds:
-        training_result = train_hist_gradient_boosting_baseline(
+        training_result = train_baseline_regressor(
             train_frame=fold.train_frame,
             validation_frame=fold.validation_frame,
             test_frame=fold.test_frame,
+            model_name=resolved_model_name,
             feature_columns=feature_columns,
+            settings=settings,
             random_state=random_state,
         )
 

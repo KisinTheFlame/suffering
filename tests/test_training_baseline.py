@@ -1,8 +1,11 @@
 import pandas as pd
+import pytest
 
+from suffering.config.settings import Settings
 from suffering.training.baseline import (
     PREDICTION_COLUMN,
     select_numeric_feature_columns,
+    train_baseline_regressor,
     train_hist_gradient_boosting_baseline,
 )
 from suffering.training.splits import split_panel_dataset_by_date
@@ -47,6 +50,32 @@ def test_baseline_training_uses_only_numeric_feature_columns_and_predicts() -> N
     )
 
     assert feature_columns == ["feature_alpha", "feature_beta"]
+    assert result.feature_columns == ["feature_alpha", "feature_beta"]
+    assert len(result.validation_predictions) == len(split.validation_frame)
+    assert len(result.test_predictions) == len(split.test_frame)
+    assert PREDICTION_COLUMN in result.validation_predictions.columns
+    assert PREDICTION_COLUMN in result.test_predictions.columns
+
+
+@pytest.mark.parametrize("model_name", ["hist_gbr", "xgb_regressor"])
+def test_train_baseline_regressor_supports_multiple_models(model_name: str) -> None:
+    frame = build_training_frame()
+    split = split_panel_dataset_by_date(
+        frame=frame,
+        train_ratio=0.6,
+        validation_ratio=0.2,
+        test_ratio=0.2,
+    )
+
+    result = train_baseline_regressor(
+        train_frame=split.train_frame,
+        validation_frame=split.validation_frame,
+        test_frame=split.test_frame,
+        model_name=model_name,
+        settings=Settings(xgb_n_estimators=12),
+        random_state=7,
+    )
+
     assert result.feature_columns == ["feature_alpha", "feature_beta"]
     assert len(result.validation_predictions) == len(split.validation_frame)
     assert len(result.test_predictions) == len(split.test_frame)

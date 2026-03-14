@@ -240,24 +240,33 @@ data/datasets/daily/panel_5d.csv
 
 其中 `relevance_5d_5q` 的含义是：对每个交易日，基于当日所有 symbol 的 `future_return_5d` 做横截面排序，再划成最多 5 桶，最差桶记为 `0`。如果某日可用 symbol 数太少，桶数会自然退化，但流程仍然保持稳定可复现。
 
-## 第五轮与第六轮已支持的训练闭环
+## 第七轮已支持的训练闭环
 
-当前仓库已经可以直接在已缓存的 `panel_5d` dataset 上完成两层最小训练闭环：
+当前仓库已经可以直接在已缓存的 `panel_5d` dataset 上完成三层连续演进后的最小训练闭环：
 
 - 第五轮：单次时间顺序切分的 baseline 训练
 - 第六轮：更严格的 walk-forward / rolling 时间验证
+- 第七轮：在同一套训练与验证框架内并存支持第二个更强回归模型 `xgb_regressor`
 
-这两层闭环都继续使用同一个 baseline 模型：
+当前支持的模型有两个：
 
-- `scikit-learn` 的 `HistGradientBoostingRegressor`
+- `hist_gbr`：`scikit-learn` 的 `HistGradientBoostingRegressor`
+- `xgb_regressor`：`xgboost.XGBRegressor`
 
-当前训练阶段会：
+这两种模型都会复用同一套训练约束：
 
 - 只使用数值特征
 - 明确排除 `date`、`symbol`、`future_return_5d`、`relevance_5d_5q`
 - 固定预测目标为 `future_return_5d`
 - 不做 shuffle，不做随机切分
+- 不做分类，不做 ranking objective，不引入 query/group
 - 复用同一套最小评估指标和 artifacts 风格
+
+当前仍然先做回归、不做 ranking，原因很直接：
+
+- 现有 dataset / split / walk-forward 闭环已经先围绕 `future_return_5d` 回归目标跑通
+- 这一轮重点是把第二个更强模型无缝接入现有闭环，而不是同时引入 ranking 数据组织和目标函数复杂度
+- 这样可以先在同一时间切分与 walk-forward 规则下做最小可比对，为下一轮 ranking 模型接入保留自然接口
 
 当前会输出的评估指标包括：
 
@@ -268,25 +277,25 @@ data/datasets/daily/panel_5d.csv
 
 ### 单次时间切分
 
-单次 baseline 训练仍然保留第五轮的实现：
+单次训练继续使用按唯一交易日的 `60% train / 20% validation / 20% test` 时间切分，并会输出 validation / test 预测与 metrics report。
 
-- 按唯一交易日做一次 `60% train / 20% validation / 20% test` 时间切分
-- 训练一次 baseline
-- 生成 validation / test 预测
-- 输出单次切分对应的 metrics report
-
-训练产物默认会写到：
+不同模型的单次训练产物会按模型名分别写到：
 
 ```text
-artifacts/models/baseline_hist_gbr.pkl
-artifacts/reports/baseline_hist_gbr_metrics.json
-artifacts/predictions/baseline_hist_gbr_validation.csv
-artifacts/predictions/baseline_hist_gbr_test.csv
+artifacts/models/hist_gbr.pkl
+artifacts/reports/hist_gbr_metrics.json
+artifacts/predictions/hist_gbr_validation.csv
+artifacts/predictions/hist_gbr_test.csv
+
+artifacts/models/xgb_regressor.pkl
+artifacts/reports/xgb_regressor_metrics.json
+artifacts/predictions/xgb_regressor_validation.csv
+artifacts/predictions/xgb_regressor_test.csv
 ```
 
-### 第六轮 walk-forward 如何工作
+### walk-forward 如何工作
 
-第六轮新增的 walk-forward 验证继续基于唯一交易日顺序工作，但不再只做一次切分。当前实现保持朴素：
+walk-forward 验证继续基于唯一交易日顺序工作，保持现有朴素实现：
 
 - 先按唯一交易日排序
 - 默认用 `20% validation / 20% test`
@@ -295,19 +304,18 @@ artifacts/predictions/baseline_hist_gbr_test.csv
 - 每个 fold 都满足 `train < validation < test`
 - 日期不重叠，不 shuffle，不随机抽样
 
-它和单次切分训练的区别很直接：
+walk-forward 会得到多组时间上连续前滚的 test 结果，汇总结果会按 fold 统计 `mean / std / min / max`，同时把 test 预测按 `fold_id + date + symbol` 拼接成一张总表，便于后续继续接更正式的组合评估。
 
-- 单次切分只会得到一组 validation / test 结果
-- walk-forward 会得到多组时间上连续前滚的 test 结果
-- 汇总结果会按 fold 统计 mean / std / min / max
-- test 预测会按 `fold_id + date + symbol` 拼接成一张总表，便于后续继续接更正式的组合评估
-
-walk-forward 产物默认会写到：
+不同模型的 walk-forward 产物会按模型名分别写到：
 
 ```text
-artifacts/reports/baseline_hist_gbr_walkforward_summary.json
-artifacts/reports/baseline_hist_gbr_walkforward_folds.csv
-artifacts/predictions/baseline_hist_gbr_walkforward_test_predictions.csv
+artifacts/reports/hist_gbr_walkforward_summary.json
+artifacts/reports/hist_gbr_walkforward_folds.csv
+artifacts/predictions/hist_gbr_walkforward_test_predictions.csv
+
+artifacts/reports/xgb_regressor_walkforward_summary.json
+artifacts/reports/xgb_regressor_walkforward_folds.csv
+artifacts/predictions/xgb_regressor_walkforward_test_predictions.csv
 ```
 
 ## 从 raw data 到 walk-forward 验证
@@ -315,14 +323,11 @@ artifacts/predictions/baseline_hist_gbr_walkforward_test_predictions.csv
 下面是一条当前可用的最小闭环命令链：
 
 ```bash
+uv sync
 uv run suffering data-fetch
 uv run suffering feature-build
 uv run suffering label-build
 uv run suffering dataset-build
-uv run suffering train-baseline
-uv run suffering train-show
-uv run suffering train-walkforward
-uv run suffering train-walkforward-show
 ```
 
 如果你想看某一步缓存内容，也可以分别执行：
@@ -333,30 +338,31 @@ uv run suffering feature-show AAPL
 uv run suffering dataset-show
 ```
 
-`train-baseline` 会打印：
+分别运行两种模型：
 
-- dataset 名称
-- 总样本数
-- 特征列数与特征列名
-- train / validation / test 的样本数和日期范围
-- validation / test 的主要指标
-- 模型、预测和报告保存路径
+```bash
+uv run suffering train-baseline --model hist_gbr
+uv run suffering train-baseline --model xgb_regressor
+uv run suffering train-show --model hist_gbr
+uv run suffering train-show --model xgb_regressor
+uv run suffering train-walkforward --model hist_gbr
+uv run suffering train-walkforward --model xgb_regressor
+uv run suffering train-walkforward-show --model hist_gbr
+uv run suffering train-walkforward-show --model xgb_regressor
+```
 
-`train-walkforward` 会打印：
+`train-baseline` 会打印 dataset 名称、当前模型名、样本数、特征列、各 split 日期范围、validation / test 指标，以及模型 / 预测 / 报告路径。
 
-- dataset 名称
-- fold 数
-- 每个 fold 的 train / validation / test 日期范围
-- 汇总后的主要 test 指标均值
-- summary / folds / predictions 的保存路径
+`train-walkforward` 会打印 dataset 名称、当前模型名、fold 数、每个 fold 的 train / validation / test 日期范围、汇总后的主要 test 指标均值，以及 summary / folds / predictions 的保存路径。
 
-`train-show` 会读取已保存的单次切分 metrics report，并检查模型文件、预测文件是否存在。
+`train-show` 会读取指定模型的单次切分 metrics report，并检查模型文件、预测文件是否存在。
 
-`train-walkforward-show` 会读取已保存的 walk-forward summary report，并检查 folds / predictions 产物是否存在。
+`train-walkforward-show` 会读取指定模型的 walk-forward summary report，并检查 folds / predictions 产物是否存在。
 
 ## 当前仍然不支持
 
-- LTR / XGBoost / LightGBM / CatBoost
+- ranking objective / LTR / query-group 数据组织
+- LightGBM / CatBoost
 - 超参数搜索
 - 正式回测、累计收益曲线、交易成本、仓位管理
 - benchmark 对比
@@ -372,10 +378,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + baseline 单次切分训练闭环 + 最小 walk-forward 验证闭环”。下一轮可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型单次切分训练闭环 + 最小 walk-forward 验证闭环”。下一轮可以按下面的方向逐步扩展：
 
-- `training`：在这套更严格时间验证之上接入更强模型，例如 `XGBoost`
-- `ranking`：接 ranking 模型与更贴近排序目标的训练方式
+- `ranking`：在这套训练验证框架之上接 ranking 模型与更贴近排序目标的训练方式
 - `backtest`：实现更正式的组合评估、持仓模拟与指标汇总
 
 在这些能力真正落地之前，当前仓库仍然保持小而清晰，避免过早引入复杂抽象。

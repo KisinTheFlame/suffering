@@ -5,7 +5,11 @@ import pandas as pd
 from suffering.config.settings import Settings
 from suffering.ranking.storage import RankingStorage
 from suffering.training.service import TrainingService
-from suffering.training.walkforward import generate_walkforward_folds, run_walkforward_baseline
+from suffering.training.walkforward import (
+    generate_walkforward_folds,
+    run_walkforward_baseline,
+    run_walkforward_training,
+)
 
 
 def build_panel_dataset(
@@ -120,7 +124,7 @@ def test_training_service_runs_walkforward_end_to_end_from_cached_dataset(
     summary = service.train_walkforward()
 
     assert summary["dataset_name"] == settings.default_dataset_name
-    assert summary["model_name"] == settings.default_model_name
+    assert summary["model_name"] == settings.default_training_model
     assert summary["fold_count"] == 4
     assert Path(summary["artifacts"]["summary_path"]).exists()
     assert Path(summary["artifacts"]["folds_path"]).exists()
@@ -129,3 +133,45 @@ def test_training_service_runs_walkforward_end_to_end_from_cached_dataset(
     report = service.read_walkforward_report()
     assert report["fold_count"] == 4
     assert report["test_metrics_summary"]["mae"]["mean"] is not None
+
+
+def test_run_walkforward_training_supports_xgb_regressor() -> None:
+    frame = build_panel_dataset(date_count=12)
+
+    result = run_walkforward_training(
+        frame=frame,
+        validation_ratio=0.2,
+        test_ratio=0.2,
+        step_ratio=0.2,
+        model_name="xgb_regressor",
+        settings=Settings(xgb_n_estimators=12),
+        random_state=7,
+    )
+
+    assert result.feature_columns == ["feature_alpha", "feature_beta"]
+    assert len(result.fold_results) == 4
+    assert result.test_metrics_summary["mae"]["mean"] is not None
+    assert len(result.combined_test_predictions) == 4 * 2 * 4
+
+
+def test_training_service_runs_xgb_walkforward_end_to_end(tmp_path: Path) -> None:
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        artifacts_dir=tmp_path / "artifacts",
+        default_symbols=["AAPL", "MSFT", "NVDA", "META"],
+        xgb_n_estimators=12,
+    )
+    dataset_frame = build_panel_dataset(date_count=12)
+    ranking_storage = RankingStorage.from_settings(settings)
+    ranking_storage.write_daily_dataset(settings.default_dataset_name, dataset_frame)
+
+    service = TrainingService.from_settings(settings)
+    summary = service.train_walkforward(model_name="xgb_regressor")
+
+    assert summary["model_name"] == "xgb_regressor"
+    assert summary["fold_count"] == 4
+    assert (
+        Path(summary["artifacts"]["summary_path"]).name
+        == "xgb_regressor_walkforward_summary.json"
+    )
+    assert summary["test_metrics_summary"]["mae"]["mean"] is not None

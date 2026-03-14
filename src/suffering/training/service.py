@@ -10,11 +10,12 @@ from suffering.config.settings import Settings, get_settings
 from suffering.data.models import DATE_COLUMN
 from suffering.ranking import RankingService, build_ranking_service
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
-from suffering.training.baseline import train_hist_gradient_boosting_baseline
+from suffering.training.baseline import train_baseline_regressor
 from suffering.training.evaluate import evaluate_predictions
+from suffering.training.models import resolve_model_name
 from suffering.training.splits import build_frame_date_summary, split_panel_dataset_by_date
 from suffering.training.storage import TrainingStorage
-from suffering.training.walkforward import run_walkforward_baseline
+from suffering.training.walkforward import run_walkforward_training
 
 
 class TrainingService:
@@ -43,7 +44,7 @@ class TrainingService:
         model_name: str | None = None,
     ) -> dict[str, Any]:
         resolved_dataset_name = dataset_name or self.settings.default_dataset_name
-        resolved_model_name = model_name or self.settings.default_model_name
+        resolved_model_name = resolve_model_name(model_name=model_name, settings=self.settings)
         dataset_frame = self.ranking_service.read_panel_dataset(dataset_name=resolved_dataset_name)
 
         split = split_panel_dataset_by_date(
@@ -52,10 +53,12 @@ class TrainingService:
             validation_ratio=self.settings.default_validation_ratio,
             test_ratio=self.settings.default_test_ratio,
         )
-        training_result = train_hist_gradient_boosting_baseline(
+        training_result = train_baseline_regressor(
             train_frame=split.train_frame,
             validation_frame=split.validation_frame,
             test_frame=split.test_frame,
+            model_name=resolved_model_name,
+            settings=self.settings,
             random_state=self.settings.random_seed,
         )
 
@@ -116,14 +119,16 @@ class TrainingService:
         model_name: str | None = None,
     ) -> dict[str, Any]:
         resolved_dataset_name = dataset_name or self.settings.default_dataset_name
-        resolved_model_name = model_name or self.settings.default_model_name
+        resolved_model_name = resolve_model_name(model_name=model_name, settings=self.settings)
         dataset_frame = self.ranking_service.read_panel_dataset(dataset_name=resolved_dataset_name)
 
-        training_result = run_walkforward_baseline(
+        training_result = run_walkforward_training(
             frame=dataset_frame,
             validation_ratio=self.settings.default_validation_ratio,
             test_ratio=self.settings.default_test_ratio,
             step_ratio=self.settings.walkforward_step_ratio,
+            model_name=resolved_model_name,
+            settings=self.settings,
             random_state=self.settings.random_seed,
             min_folds=self.settings.walkforward_min_folds,
         )
@@ -172,7 +177,7 @@ class TrainingService:
         }
 
     def read_training_report(self, model_name: str | None = None) -> dict[str, Any]:
-        resolved_model_name = model_name or self.settings.default_model_name
+        resolved_model_name = resolve_model_name(model_name=model_name, settings=self.settings)
         report = self.storage.read_metrics_report(resolved_model_name)
         return {
             **report,
@@ -189,7 +194,7 @@ class TrainingService:
         }
 
     def read_walkforward_report(self, model_name: str | None = None) -> dict[str, Any]:
-        resolved_model_name = model_name or self.settings.default_model_name
+        resolved_model_name = resolve_model_name(model_name=model_name, settings=self.settings)
         report = self.storage.read_walkforward_summary(resolved_model_name)
         return {
             **report,

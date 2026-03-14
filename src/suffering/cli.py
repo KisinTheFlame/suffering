@@ -15,7 +15,7 @@ from suffering.features.definitions import FEATURE_COLUMNS
 from suffering.ranking import build_ranking_service
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
-from suffering.training import build_training_service
+from suffering.training import SUPPORTED_MODEL_NAMES, build_training_service
 from suffering.training.evaluate import METRIC_NAMES
 
 
@@ -111,8 +111,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dataset cache name, defaulting to the configured panel dataset name.",
     )
     train_baseline_parser.add_argument(
+        "--model",
+        dest="model",
+        help=(
+            "Training model name, defaulting to the configured training model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    train_baseline_parser.add_argument(
         "--model-name",
-        help="Model artifact name, defaulting to the configured baseline model name.",
+        dest="model",
+        help=argparse.SUPPRESS,
     )
 
     train_show_parser = subparsers.add_parser(
@@ -120,8 +129,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the most recent saved baseline training report.",
     )
     train_show_parser.add_argument(
+        "--model",
+        dest="model",
+        help=(
+            "Training model name, defaulting to the configured training model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    train_show_parser.add_argument(
         "--model-name",
-        help="Model artifact name, defaulting to the configured baseline model name.",
+        dest="model",
+        help=argparse.SUPPRESS,
     )
 
     train_walkforward_parser = subparsers.add_parser(
@@ -133,8 +151,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dataset cache name, defaulting to the configured panel dataset name.",
     )
     train_walkforward_parser.add_argument(
+        "--model",
+        dest="model",
+        help=(
+            "Training model name, defaulting to the configured training model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    train_walkforward_parser.add_argument(
         "--model-name",
-        help="Model artifact name, defaulting to the configured baseline model name.",
+        dest="model",
+        help=argparse.SUPPRESS,
     )
 
     train_walkforward_show_parser = subparsers.add_parser(
@@ -142,8 +169,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the most recent saved walk-forward validation report.",
     )
     train_walkforward_show_parser.add_argument(
+        "--model",
+        dest="model",
+        help=(
+            "Training model name, defaulting to the configured training model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    train_walkforward_show_parser.add_argument(
         "--model-name",
-        help="Model artifact name, defaulting to the configured baseline model name.",
+        dest="model",
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -163,8 +199,8 @@ def run_doctor() -> int:
     print(f"default_symbols: {', '.join(get_default_universe(settings))}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
-        "status: minimal data, feature, label, dataset, baseline training, and walk-forward "
-        "validation layers available; formal backtest is not implemented yet"
+        "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor training, "
+        "and walk-forward validation layers available; formal backtest is not implemented yet"
     )
     return 0
 
@@ -341,7 +377,7 @@ def run_train_baseline(dataset_name: str | None, model_name: str | None) -> int:
     settings = get_settings()
     service = build_training_service(settings)
     resolved_dataset_name = dataset_name or settings.default_dataset_name
-    resolved_model_name = model_name or settings.default_model_name
+    resolved_model_name = model_name or settings.default_training_model
 
     try:
         summary = service.train_baseline(
@@ -385,7 +421,7 @@ def run_train_baseline(dataset_name: str | None, model_name: str | None) -> int:
 def run_train_show(model_name: str | None) -> int:
     settings = get_settings()
     service = build_training_service(settings)
-    resolved_model_name = model_name or settings.default_model_name
+    resolved_model_name = model_name or settings.default_training_model
 
     try:
         report = service.read_training_report(model_name=resolved_model_name)
@@ -394,6 +430,9 @@ def run_train_show(model_name: str | None) -> int:
             f"training report not found for model: {resolved_model_name}. "
             f"Run `suffering train-baseline` first."
         )
+        return 1
+    except ValueError as exc:
+        print(f"training report failed: {exc}")
         return 1
 
     print(f"model: {report['model_name']}")
@@ -427,7 +466,7 @@ def run_train_walkforward(dataset_name: str | None, model_name: str | None) -> i
     settings = get_settings()
     service = build_training_service(settings)
     resolved_dataset_name = dataset_name or settings.default_dataset_name
-    resolved_model_name = model_name or settings.default_model_name
+    resolved_model_name = model_name or settings.default_training_model
 
     try:
         summary = service.train_walkforward(
@@ -475,7 +514,7 @@ def run_train_walkforward(dataset_name: str | None, model_name: str | None) -> i
 def run_train_walkforward_show(model_name: str | None) -> int:
     settings = get_settings()
     service = build_training_service(settings)
-    resolved_model_name = model_name or settings.default_model_name
+    resolved_model_name = model_name or settings.default_training_model
 
     try:
         report = service.read_walkforward_report(model_name=resolved_model_name)
@@ -484,6 +523,9 @@ def run_train_walkforward_show(model_name: str | None) -> int:
             f"walk-forward report not found for model: {resolved_model_name}. "
             f"Run `suffering train-walkforward` first."
         )
+        return 1
+    except ValueError as exc:
+        print(f"walk-forward report failed: {exc}")
         return 1
 
     print(f"model: {report['model_name']}")
@@ -548,13 +590,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "dataset-show":
         return run_dataset_show(dataset_name=args.dataset_name)
     if args.command == "train-baseline":
-        return run_train_baseline(dataset_name=args.dataset_name, model_name=args.model_name)
+        return run_train_baseline(dataset_name=args.dataset_name, model_name=args.model)
     if args.command == "train-show":
-        return run_train_show(model_name=args.model_name)
+        return run_train_show(model_name=args.model)
     if args.command == "train-walkforward":
-        return run_train_walkforward(dataset_name=args.dataset_name, model_name=args.model_name)
+        return run_train_walkforward(dataset_name=args.dataset_name, model_name=args.model)
     if args.command == "train-walkforward-show":
-        return run_train_walkforward_show(model_name=args.model_name)
+        return run_train_walkforward_show(model_name=args.model)
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")

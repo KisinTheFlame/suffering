@@ -2,32 +2,49 @@ from pathlib import Path
 
 from suffering.cli import main
 
+SUPPORTED_MODELS = {"hist_gbr", "xgb_regressor"}
+
 
 class FakeTrainingService:
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir
-        self.model_path = root_dir / "models" / "baseline_hist_gbr.pkl"
-        self.metrics_path = root_dir / "reports" / "baseline_hist_gbr_metrics.json"
-        self.validation_path = root_dir / "predictions" / "baseline_hist_gbr_validation.csv"
-        self.test_path = root_dir / "predictions" / "baseline_hist_gbr_test.csv"
-        self.walkforward_summary_path = (
-            root_dir / "reports" / "baseline_hist_gbr_walkforward_summary.json"
-        )
-        self.walkforward_folds_path = (
-            root_dir / "reports" / "baseline_hist_gbr_walkforward_folds.csv"
-        )
-        self.walkforward_predictions_path = (
-            root_dir / "predictions" / "baseline_hist_gbr_walkforward_test_predictions.csv"
-        )
+
+    def _artifact_paths(self, model_name: str) -> dict[str, Path]:
+        return {
+            "model_path": self.root_dir / "models" / f"{model_name}.pkl",
+            "metrics_path": self.root_dir / "reports" / f"{model_name}_metrics.json",
+            "validation_path": self.root_dir / "predictions" / f"{model_name}_validation.csv",
+            "test_path": self.root_dir / "predictions" / f"{model_name}_test.csv",
+            "walkforward_summary_path": (
+                self.root_dir / "reports" / f"{model_name}_walkforward_summary.json"
+            ),
+            "walkforward_folds_path": (
+                self.root_dir / "reports" / f"{model_name}_walkforward_folds.csv"
+            ),
+            "walkforward_predictions_path": (
+                self.root_dir / "predictions" / f"{model_name}_walkforward_test_predictions.csv"
+            ),
+        }
+
+    def _resolve_model_name(self, model_name: str | None) -> str:
+        resolved_model_name = model_name or "hist_gbr"
+        if resolved_model_name not in SUPPORTED_MODELS:
+            raise ValueError(
+                "Unsupported training model: "
+                f"{resolved_model_name}. Supported models: hist_gbr, xgb_regressor"
+            )
+        return resolved_model_name
 
     def train_baseline(
         self,
         dataset_name: str | None = None,
         model_name: str | None = None,
     ) -> dict[str, object]:
+        resolved_model_name = self._resolve_model_name(model_name)
+        artifacts = self._artifact_paths(resolved_model_name)
         return {
             "dataset_name": dataset_name or "panel_5d",
-            "model_name": model_name or "baseline_hist_gbr",
+            "model_name": resolved_model_name,
             "total_rows": 30,
             "feature_columns": ["feature_alpha", "feature_beta"],
             "feature_count": 2,
@@ -70,26 +87,29 @@ class FakeTrainingService:
                 "top_10_mean_future_return": 0.012,
             },
             "artifacts": {
-                "model_path": str(self.model_path),
-                "metrics_path": str(self.metrics_path),
-                "validation_predictions_path": str(self.validation_path),
-                "test_predictions_path": str(self.test_path),
+                "model_path": str(artifacts["model_path"]),
+                "metrics_path": str(artifacts["metrics_path"]),
+                "validation_predictions_path": str(artifacts["validation_path"]),
+                "test_predictions_path": str(artifacts["test_path"]),
             },
         }
 
     def read_training_report(self, model_name: str | None = None) -> dict[str, object]:
-        if model_name == "missing":
+        resolved_model_name = self._resolve_model_name(model_name)
+        if resolved_model_name == "hist_gbr_missing":
             raise FileNotFoundError
-        return self.train_baseline(model_name=model_name)
+        return self.train_baseline(model_name=resolved_model_name)
 
     def train_walkforward(
         self,
         dataset_name: str | None = None,
         model_name: str | None = None,
     ) -> dict[str, object]:
+        resolved_model_name = self._resolve_model_name(model_name)
+        artifacts = self._artifact_paths(resolved_model_name)
         return {
             "dataset_name": dataset_name or "panel_5d",
-            "model_name": model_name or "baseline_hist_gbr",
+            "model_name": resolved_model_name,
             "total_rows": 48,
             "date_count": 12,
             "feature_columns": ["feature_alpha", "feature_beta"],
@@ -160,40 +180,73 @@ class FakeTrainingService:
                 },
             },
             "artifacts": {
-                "summary_path": str(self.walkforward_summary_path),
-                "folds_path": str(self.walkforward_folds_path),
-                "predictions_path": str(self.walkforward_predictions_path),
+                "summary_path": str(artifacts["walkforward_summary_path"]),
+                "folds_path": str(artifacts["walkforward_folds_path"]),
+                "predictions_path": str(artifacts["walkforward_predictions_path"]),
             },
         }
 
     def read_walkforward_report(self, model_name: str | None = None) -> dict[str, object]:
-        if model_name == "missing":
+        resolved_model_name = self._resolve_model_name(model_name)
+        if resolved_model_name == "hist_gbr_missing":
             raise FileNotFoundError
-        return self.train_walkforward(model_name=model_name)
+        return self.train_walkforward(model_name=resolved_model_name)
 
 
-def test_train_baseline_command_can_be_called(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_train_baseline_command_supports_hist_gbr(monkeypatch, capsys, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "suffering.cli.build_training_service",
         lambda settings=None: FakeTrainingService(tmp_path),
     )
 
-    exit_code = main(["train-baseline"])
+    exit_code = main(["train-baseline", "--model", "hist_gbr"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "dataset: panel_5d" in captured.out
-    assert "model: baseline_hist_gbr" in captured.out
+    assert "model: hist_gbr" in captured.out
     assert "feature_count: 2" in captured.out
+
+
+def test_train_baseline_command_supports_xgb_regressor(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_training_service",
+        lambda settings=None: FakeTrainingService(tmp_path),
+    )
+
+    exit_code = main(["train-baseline", "--model", "xgb_regressor"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "model: xgb_regressor" in captured.out
+    assert "xgb_regressor_metrics.json" in captured.out
+
+
+def test_train_baseline_command_reports_unknown_model(monkeypatch, capsys, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_training_service",
+        lambda settings=None: FakeTrainingService(tmp_path),
+    )
+
+    exit_code = main(["train-baseline", "--model", "unknown_model"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Unsupported training model: unknown_model" in captured.out
 
 
 def test_train_show_command_can_be_called(monkeypatch, capsys, tmp_path: Path) -> None:
     service = FakeTrainingService(tmp_path)
+    artifacts = service._artifact_paths("xgb_regressor")
     for path in (
-        service.model_path,
-        service.metrics_path,
-        service.validation_path,
-        service.test_path,
+        artifacts["model_path"],
+        artifacts["metrics_path"],
+        artifacts["validation_path"],
+        artifacts["test_path"],
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("ok", encoding="utf-8")
@@ -203,41 +256,52 @@ def test_train_show_command_can_be_called(monkeypatch, capsys, tmp_path: Path) -
         lambda settings=None: service,
     )
 
-    exit_code = main(["train-show"])
+    exit_code = main(["train-show", "--model", "xgb_regressor"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "model: xgb_regressor" in captured.out
     assert "model_exists: True" in captured.out
     assert "validation_predictions_exists: True" in captured.out
     assert "test_predictions_exists: True" in captured.out
 
 
-def test_train_show_command_reports_missing_report(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_train_walkforward_command_supports_hist_gbr(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setattr(
         "suffering.cli.build_training_service",
         lambda settings=None: FakeTrainingService(tmp_path),
     )
 
-    exit_code = main(["train-show", "--model-name", "missing"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "training report not found for model: missing" in captured.out
-
-
-def test_train_walkforward_command_can_be_called(monkeypatch, capsys, tmp_path: Path) -> None:
-    monkeypatch.setattr(
-        "suffering.cli.build_training_service",
-        lambda settings=None: FakeTrainingService(tmp_path),
-    )
-
-    exit_code = main(["train-walkforward"])
+    exit_code = main(["train-walkforward", "--model", "hist_gbr"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "dataset: panel_5d" in captured.out
+    assert "model: hist_gbr" in captured.out
     assert "fold_count: 3" in captured.out
     assert "walkforward_test_metric_means:" in captured.out
+
+
+def test_train_walkforward_command_supports_xgb_regressor(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_training_service",
+        lambda settings=None: FakeTrainingService(tmp_path),
+    )
+
+    exit_code = main(["train-walkforward", "--model", "xgb_regressor"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "model: xgb_regressor" in captured.out
+    assert "xgb_regressor_walkforward_summary.json" in captured.out
 
 
 def test_train_walkforward_show_command_can_be_called(
@@ -246,10 +310,11 @@ def test_train_walkforward_show_command_can_be_called(
     tmp_path: Path,
 ) -> None:
     service = FakeTrainingService(tmp_path)
+    artifacts = service._artifact_paths("xgb_regressor")
     for path in (
-        service.walkforward_summary_path,
-        service.walkforward_folds_path,
-        service.walkforward_predictions_path,
+        artifacts["walkforward_summary_path"],
+        artifacts["walkforward_folds_path"],
+        artifacts["walkforward_predictions_path"],
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("ok", encoding="utf-8")
@@ -259,16 +324,17 @@ def test_train_walkforward_show_command_can_be_called(
         lambda settings=None: service,
     )
 
-    exit_code = main(["train-walkforward-show"])
+    exit_code = main(["train-walkforward-show", "--model", "xgb_regressor"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "model: xgb_regressor" in captured.out
     assert "summary_exists: True" in captured.out
     assert "folds_exists: True" in captured.out
     assert "predictions_exists: True" in captured.out
 
 
-def test_train_walkforward_show_reports_missing_report(
+def test_train_walkforward_show_reports_unknown_model(
     monkeypatch,
     capsys,
     tmp_path: Path,
@@ -278,8 +344,8 @@ def test_train_walkforward_show_reports_missing_report(
         lambda settings=None: FakeTrainingService(tmp_path),
     )
 
-    exit_code = main(["train-walkforward-show", "--model-name", "missing"])
+    exit_code = main(["train-walkforward-show", "--model", "unknown_model"])
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "walk-forward report not found for model: missing" in captured.out
+    assert "Unsupported training model: unknown_model" in captured.out

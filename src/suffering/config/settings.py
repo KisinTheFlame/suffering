@@ -26,7 +26,12 @@ class Settings(BaseSettings):
     walkforward_step_ratio: float = 0.2
     walkforward_min_folds: int = 1
     random_seed: int = 7
-    default_model_name: str = "baseline_hist_gbr"
+    default_training_model: str = "hist_gbr"
+    xgb_n_estimators: int = 100
+    xgb_max_depth: int = 4
+    xgb_learning_rate: float = 0.05
+    xgb_subsample: float = 0.8
+    xgb_colsample_bytree: float = 0.8
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -47,6 +52,9 @@ class Settings(BaseSettings):
         "default_validation_ratio",
         "default_test_ratio",
         "walkforward_step_ratio",
+        "xgb_learning_rate",
+        "xgb_subsample",
+        "xgb_colsample_bytree",
     )
     @classmethod
     def validate_ratio_range(cls, value: float) -> float:
@@ -59,6 +67,13 @@ class Settings(BaseSettings):
     def validate_walkforward_min_folds(cls, value: int) -> int:
         if value < 1:
             raise ValueError("walkforward_min_folds must be at least 1")
+        return value
+
+    @field_validator("xgb_n_estimators", "xgb_max_depth")
+    @classmethod
+    def validate_positive_int(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("xgboost integer settings must be at least 1")
         return value
 
     @model_validator(mode="after")
