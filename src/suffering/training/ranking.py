@@ -13,6 +13,7 @@ from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
 from suffering.training.baseline import select_numeric_feature_columns
 from suffering.training.models import build_ranker
+from suffering.training.prediction import predict_with_model
 
 SCORE_PREDICTION_COLUMN = "score_pred"
 
@@ -150,6 +151,9 @@ def build_score_prediction_frame(
             RELEVANCE_5D_5Q_COLUMN,
         ],
     ].copy()
-    prediction_frame[SCORE_PREDICTION_COLUMN] = model.predict(frame.loc[:, feature_columns])
+    prediction_frame[SCORE_PREDICTION_COLUMN] = predict_with_model(
+        model=model,
+        feature_frame=frame.loc[:, feature_columns],
+    )
     prediction_frame["model_name"] = model_name
     return prediction_frame

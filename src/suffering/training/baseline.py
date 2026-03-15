@@ -12,6 +12,7 @@ from suffering.data.models import DATE_COLUMN, SYMBOL_COLUMN
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
 from suffering.training.models import build_regressor
+from suffering.training.prediction import predict_with_model
 
 PREDICTION_COLUMN = "predicted_future_return_5d"
 EXCLUDED_FEATURE_COLUMNS = {
@@ -102,5 +103,8 @@ def build_prediction_frame(
         prediction_columns.append(RELEVANCE_5D_5Q_COLUMN)
 
     prediction_frame = frame.loc[:, prediction_columns].copy()
-    prediction_frame[PREDICTION_COLUMN] = model.predict(frame.loc[:, feature_columns])
+    prediction_frame[PREDICTION_COLUMN] = predict_with_model(
+        model=model,
+        feature_frame=frame.loc[:, feature_columns],
+    )
     return prediction_frame
