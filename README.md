@@ -890,6 +890,37 @@ artifacts/remote_pipeline/<model>_top<k>_h<holding_days>_cost<round_trip_cost>/
 --with-robustness
 ```
 
+如果你想把“当前 Nasdaq-100 静态成分股 + 多年历史数据”作为主实验一键跑完，可以直接用：
+
+```bash
+uv run python scripts/remote_run_nasdaq100_current_static_pipeline.py \
+  --ssh-target gpu-wsl \
+  --remote-dir /home/kisin/workspace/suffering
+```
+
+这条命令会在远端 GPU 机器上运行：
+
+```bash
+uv run python scripts/run_nasdaq100_current_static_pipeline.py
+```
+
+并把整包实验产物拉回本地：
+
+```text
+artifacts/remote_experiments/nasdaq100_current_static_2018_2025/
+```
+
+这套主实验当前的固定设定是：
+
+- universe：脚本内置的一份“当前 Nasdaq-100 静态成分股”列表
+- benchmark：`QQQ`
+- date range：`2018-01-01 -> 2025-12-31`
+- dataset：`nasdaq100_current_static_panel_5d`
+- model：`xgb_ranker`
+- top-k：`5`
+- holding_days：`5`
+- cost_bps_per_side：`5.0`
+
 ### 这套流程适合做什么
 
 - 本地修改代码、跑测试、提交 commit

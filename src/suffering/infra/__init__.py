@@ -1,5 +1,23 @@
 """Infrastructure helpers for reproducible local and remote research workflows."""
 
+from suffering.infra.nasdaq100_experiment import (
+    BENCHMARK_SYMBOLS,
+    COST_BPS_PER_SIDE,
+    CURRENT_NASDAQ_100_SYMBOLS,
+    DATASET_NAME,
+    END_DATE,
+    FETCH_RETRIES,
+    FETCH_SYMBOLS,
+    HOLDING_DAYS,
+    MODEL_NAME,
+    RUN_NAME,
+    START_DATE,
+    TOP_K,
+    build_nasdaq100_current_static_settings,
+    local_artifacts_output_dir,
+    remote_artifacts_relative_root,
+    report_relative_path,
+)
 from suffering.infra.remote_pipeline import (
     RemotePipelineSpec,
     build_local_pipeline_output_dir,
@@ -18,8 +36,21 @@ from suffering.infra.remote_workflow import (
 )
 
 __all__ = [
+    "BENCHMARK_SYMBOLS",
+    "COST_BPS_PER_SIDE",
+    "CURRENT_NASDAQ_100_SYMBOLS",
+    "DATASET_NAME",
+    "END_DATE",
+    "FETCH_RETRIES",
+    "FETCH_SYMBOLS",
+    "HOLDING_DAYS",
+    "MODEL_NAME",
     "RemotePipelineSpec",
     "RemoteWorkflowConfig",
+    "RUN_NAME",
+    "START_DATE",
+    "TOP_K",
+    "build_nasdaq100_current_static_settings",
     "build_local_pipeline_output_dir",
     "build_pipeline_artifact_relative_paths",
     "build_pipeline_bundle_name",
@@ -30,4 +61,7 @@ __all__ = [
     "build_remote_prepare_command",
     "build_ssh_command",
     "build_uv_sync_command",
+    "local_artifacts_output_dir",
+    "remote_artifacts_relative_root",
+    "report_relative_path",
 ]

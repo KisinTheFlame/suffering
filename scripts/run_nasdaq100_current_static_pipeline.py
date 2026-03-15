@@ -8,157 +8,31 @@ constituents, then runs the existing local pipeline over 2018-01-01 to
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from suffering.backtest import build_backtest_service
-from suffering.config.settings import Settings
 from suffering.data import build_data_service
 from suffering.features import build_feature_service
+from suffering.infra import (
+    COST_BPS_PER_SIDE,
+    CURRENT_NASDAQ_100_SYMBOLS,
+    DATASET_NAME,
+    END_DATE,
+    FETCH_RETRIES,
+    FETCH_SYMBOLS,
+    HOLDING_DAYS,
+    MODEL_NAME,
+    RUN_NAME,
+    START_DATE,
+    TOP_K,
+    build_nasdaq100_current_static_settings,
+)
 from suffering.ranking import build_ranking_service
 from suffering.reports import build_report_service
 from suffering.training import build_training_service
 
-CURRENT_NASDAQ_100_SYMBOLS = [
-    "ADBE",
-    "AMD",
-    "ABNB",
-    "ALNY",
-    "GOOGL",
-    "GOOG",
-    "AMZN",
-    "AEP",
-    "AMGN",
-    "ADI",
-    "AAPL",
-    "AMAT",
-    "APP",
-    "ARM",
-    "ASML",
-    "TEAM",
-    "ADSK",
-    "ADP",
-    "AXON",
-    "BKR",
-    "BKNG",
-    "AVGO",
-    "CDNS",
-    "CHTR",
-    "CTAS",
-    "CSCO",
-    "CCEP",
-    "CTSH",
-    "CMCSA",
-    "CEG",
-    "CPRT",
-    "CSGP",
-    "COST",
-    "CRWD",
-    "CSX",
-    "DDOG",
-    "DXCM",
-    "FANG",
-    "DASH",
-    "EA",
-    "EXC",
-    "FAST",
-    "FER",
-    "FTNT",
-    "GEHC",
-    "GILD",
-    "HON",
-    "IDXX",
-    "INSM",
-    "INTC",
-    "INTU",
-    "ISRG",
-    "KDP",
-    "KLAC",
-    "KHC",
-    "LRCX",
-    "LIN",
-    "MAR",
-    "MRVL",
-    "MELI",
-    "META",
-    "MCHP",
-    "MU",
-    "MSFT",
-    "MSTR",
-    "MDLZ",
-    "MPWR",
-    "MNST",
-    "NFLX",
-    "NVDA",
-    "NXPI",
-    "ORLY",
-    "ODFL",
-    "PCAR",
-    "PLTR",
-    "PANW",
-    "PAYX",
-    "PYPL",
-    "PDD",
-    "PEP",
-    "QCOM",
-    "REGN",
-    "ROP",
-    "ROST",
-    "STX",
-    "SHOP",
-    "SBUX",
-    "SNPS",
-    "TMUS",
-    "TTWO",
-    "TSLA",
-    "TXN",
-    "TRI",
-    "VRSK",
-    "VRTX",
-    "WMT",
-    "WBD",
-    "WDC",
-    "WDAY",
-    "XEL",
-    "ZS",
-]
-BENCHMARK_SYMBOLS = ["QQQ"]
-FETCH_SYMBOLS = CURRENT_NASDAQ_100_SYMBOLS + BENCHMARK_SYMBOLS
-
-RUN_NAME = "nasdaq100_current_static_2018_2025"
-START_DATE = "2018-01-01"
-END_DATE = "2025-12-31"
-DATASET_NAME = "nasdaq100_current_static_panel_5d"
-MODEL_NAME = "xgb_ranker"
-TOP_K = 5
-HOLDING_DAYS = 5
-COST_BPS_PER_SIDE = 5.0
-FETCH_RETRIES = 3
-
-
-def build_run_settings() -> Settings:
-    data_dir = Path("data") / RUN_NAME
-    artifacts_dir = Path("artifacts") / RUN_NAME
-    return Settings(
-        data_dir=data_dir,
-        artifacts_dir=artifacts_dir,
-        default_start_date=START_DATE,
-        default_end_date=END_DATE,
-        default_symbols=list(CURRENT_NASDAQ_100_SYMBOLS),
-        default_dataset_name=DATASET_NAME,
-        default_training_model=MODEL_NAME,
-        default_backtest_model=MODEL_NAME,
-        default_report_model=MODEL_NAME,
-        default_top_k=TOP_K,
-        default_holding_days=HOLDING_DAYS,
-        default_cost_bps_per_side=COST_BPS_PER_SIDE,
-        default_report_top_k=TOP_K,
-        default_report_holding_days=HOLDING_DAYS,
-        default_report_cost_bps_per_side=COST_BPS_PER_SIDE,
-    )
-
 
 def main() -> int:
-    settings = build_run_settings()
+    settings = build_nasdaq100_current_static_settings()
     data_service = build_data_service(settings)
     feature_service = build_feature_service(settings)
     ranking_service = build_ranking_service(settings)
@@ -244,16 +118,11 @@ def fetch_raw_data(data_service) -> list[str]:
     total = len(FETCH_SYMBOLS)
     print(f"fetching_raw_data: {total} symbol(s)")
     for index, symbol in enumerate(FETCH_SYMBOLS, start=1):
-        if data_service.storage.exists(symbol):
-            cached_frame = data_service.storage.read_daily_data(symbol)
-            print(f"[fetch {index}/{total}] {symbol}: using cached {len(cached_frame)} rows")
-            continue
-
         success = False
         last_error: Exception | None = None
         for attempt in range(1, FETCH_RETRIES + 1):
             try:
-                frame = data_service.fetch_daily_data(
+                result = data_service.update_daily_data(
                     symbol=symbol,
                     start_date=START_DATE,
                     end_date=END_DATE,
@@ -267,7 +136,18 @@ def fetch_raw_data(data_service) -> list[str]:
                 time.sleep(float(attempt))
                 continue
 
-            print(f"[fetch {index}/{total}] {symbol}: {len(frame)} rows")
+            if result.action == "cache_hit":
+                print(
+                    f"[fetch {index}/{total}] {symbol}: "
+                    f"cache hit ({result.cached_rows} rows)"
+                )
+            elif result.action == "incremental_update":
+                print(
+                    f"[fetch {index}/{total}] {symbol}: "
+                    f"incremental update (+{result.fetched_rows} rows, {result.cached_rows} cached)"
+                )
+            else:
+                print(f"[fetch {index}/{total}] {symbol}: full refresh ({result.cached_rows} rows)")
             success = True
             break
 
@@ -282,16 +162,16 @@ def build_features(feature_service) -> None:
     total = len(CURRENT_NASDAQ_100_SYMBOLS)
     print(f"building_features: {total} symbol(s)")
     for index, symbol in enumerate(CURRENT_NASDAQ_100_SYMBOLS, start=1):
-        frame = feature_service.build_features_for_symbol(symbol)
-        print(f"[feature {index}/{total}] {symbol}: {len(frame)} rows")
+        result = feature_service.update_features_for_symbol(symbol)
+        print(f"[feature {index}/{total}] {symbol}: {result.action} ({result.cached_rows} rows)")
 
 
 def build_labels(ranking_service) -> None:
     total = len(CURRENT_NASDAQ_100_SYMBOLS)
     print(f"building_labels: {total} symbol(s)")
     for index, symbol in enumerate(CURRENT_NASDAQ_100_SYMBOLS, start=1):
-        frame = ranking_service.build_label_for_symbol(symbol)
-        print(f"[label {index}/{total}] {symbol}: {len(frame)} rows")
+        result = ranking_service.update_label_for_symbol(symbol)
+        print(f"[label {index}/{total}] {symbol}: {result.action} ({result.cached_rows} rows)")
 
 
 if __name__ == "__main__":
