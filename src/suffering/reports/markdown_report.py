@@ -202,6 +202,7 @@ def _render_cell_value(value: Any, column: str) -> str:
             "xgb_ranker": "xgb_ranker",
             "hist_gbr": "hist_gbr",
             "xgb_regressor": "xgb_regressor",
+            "long_short_qqq": "long_short_qqq",
             "simple_momentum_top_k": "simple_momentum_top_k",
             "qqq_buy_and_hold": "qqq_buy_and_hold",
             "equal_weight_universe_buy_and_hold": "equal_weight_universe_buy_and_hold",

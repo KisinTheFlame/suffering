@@ -28,6 +28,7 @@ WALKFORWARD_METRIC_NAMES = [
 
 BENCHMARK_STRATEGY_ORDER = [
     "model_strategy",
+    "long_short_qqq",
     "simple_momentum_top_k",
     "qqq_buy_and_hold",
     "equal_weight_universe_buy_and_hold",
@@ -669,6 +670,7 @@ class ReportService:
             "missing_items": [
                 name
                 for name in (
+                    "long_short_qqq",
                     "simple_momentum_top_k",
                     "qqq_buy_and_hold",
                     "equal_weight_universe_buy_and_hold",

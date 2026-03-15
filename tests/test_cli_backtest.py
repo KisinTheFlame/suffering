@@ -110,7 +110,7 @@ class FakeBacktestService:
             "top_k": top_k or 5,
             "holding_days": holding_days or 5,
             "cost_bps_per_side": cost_bps_per_side or 5.0,
-            "benchmark_count": 3,
+            "benchmark_count": 4,
             "comparison_date_start": "2024-01-03",
             "comparison_date_end": "2024-01-09",
             "model_strategy": {
@@ -119,7 +119,7 @@ class FakeBacktestService:
                 "max_drawdown_net": -0.06,
             },
             "best_benchmark_by_sharpe_net": {
-                "strategy_name": "simple_momentum_top_k",
+                "strategy_name": "long_short_qqq",
                 "sharpe_ratio_net": 1.1,
             },
             "best_benchmark_by_total_return_net": {
@@ -131,6 +131,7 @@ class FakeBacktestService:
                 "table_path": str(comparison_table_path),
             },
             "benchmark_artifacts": {
+                "long_short_qqq": artifacts,
                 "simple_momentum_top_k": artifacts,
             },
         }
@@ -154,6 +155,18 @@ class FakeBacktestService:
         return {
             **report,
             "table_rows": [
+                {
+                    "strategy_name": "long_short_qqq",
+                    "task_type": "benchmark",
+                    "total_return_net": 0.12,
+                    "sharpe_ratio_net": 1.1,
+                    "max_drawdown_net": -0.04,
+                    "annualized_return_net": 0.22,
+                    "annualized_volatility": 0.17,
+                    "average_daily_turnover": 0.4,
+                    "start_date": "2024-01-03",
+                    "end_date": "2024-01-09",
+                },
                 {
                     "strategy_name": "simple_momentum_top_k",
                     "task_type": "benchmark",
@@ -300,7 +313,7 @@ def test_backtest_compare_command_can_be_called(monkeypatch, capsys, tmp_path: P
 
     assert exit_code == 0
     assert "model: xgb_ranker" in captured.out
-    assert "benchmark_count: 3" in captured.out
+    assert "benchmark_count: 4" in captured.out
     assert "comparison_summary_path:" in captured.out
 
 

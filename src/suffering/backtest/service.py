@@ -14,6 +14,7 @@ from suffering.backtest.benchmarks import (
     BenchmarkBacktestResult,
     build_candidate_frame_from_features,
     build_equal_weight_universe_buy_and_hold_benchmark,
+    build_long_top_k_short_qqq_benchmark,
     build_qqq_buy_and_hold_benchmark,
     build_simple_momentum_top_k_benchmark,
     extract_price_frames_for_symbols,
@@ -261,6 +262,12 @@ class BacktestService:
             resolved_holding_days,
             resolved_cost_bps,
         )
+        model_trades = self.storage.read_trades(
+            resolved_model_name,
+            resolved_top_k,
+            resolved_holding_days,
+            resolved_cost_bps,
+        )
         model_signals = load_walkforward_test_signals(
             model_name=resolved_model_name,
             training_storage=self.training_storage,
@@ -278,6 +285,8 @@ class BacktestService:
         target_dates = model_daily_returns["date"]
         benchmark_results = self._build_benchmarks(
             model_signals=model_signals,
+            model_daily_returns=model_daily_returns,
+            model_trades=model_trades,
             target_dates=target_dates,
             price_frames=price_frames,
             top_k=resolved_top_k,
@@ -650,6 +659,8 @@ class BacktestService:
     def _build_benchmarks(
         self,
         model_signals: pd.DataFrame,
+        model_daily_returns: pd.DataFrame,
+        model_trades: pd.DataFrame,
         target_dates: pd.Series,
         price_frames: dict[str, pd.DataFrame],
         top_k: int,
@@ -687,7 +698,15 @@ class BacktestService:
             price_frame=qqq_price_frame,
             cost_bps_per_side=cost_bps_per_side,
         )
-        return [qqq_result, equal_weight_result, momentum_result]
+        long_short_result = build_long_top_k_short_qqq_benchmark(
+            target_dates=target_dates,
+            model_daily_returns=model_daily_returns,
+            model_trades=model_trades,
+            qqq_price_frame=qqq_price_frame,
+            cost_bps_per_side=cost_bps_per_side,
+            strategy_name="long_short_qqq",
+        )
+        return [long_short_result, qqq_result, equal_weight_result, momentum_result]
 
     def _build_comparison_row(
         self,

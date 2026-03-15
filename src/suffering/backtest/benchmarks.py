@@ -245,6 +245,96 @@ def build_simple_momentum_top_k_benchmark(
     )
 
 
+def build_long_top_k_short_qqq_benchmark(
+    target_dates: pd.Series,
+    model_daily_returns: pd.DataFrame,
+    model_trades: pd.DataFrame,
+    qqq_price_frame: pd.DataFrame,
+    cost_bps_per_side: float,
+    strategy_name: str = "long_top_k_short_qqq",
+) -> BenchmarkBacktestResult:
+    normalized_target_dates = _normalize_target_dates(target_dates)
+    if normalized_target_dates.empty:
+        raise ValueError("target_dates must not be empty")
+
+    aligned_long_leg = align_daily_returns_to_target_dates(
+        model_daily_returns,
+        normalized_target_dates,
+    )
+    qqq_benchmark = build_qqq_buy_and_hold_benchmark(
+        target_dates=normalized_target_dates,
+        price_frame=qqq_price_frame,
+        cost_bps_per_side=cost_bps_per_side,
+    )
+    hedge_daily_returns = _build_short_hedge_daily_returns(
+        qqq_benchmark.daily_returns,
+        cost_bps_per_side=cost_bps_per_side,
+    )
+
+    combined_daily_returns = aligned_long_leg.loc[
+        :,
+        [
+            DATE_COLUMN,
+            "gross_return",
+            "net_return",
+            "turnover",
+            "active_positions",
+            "active_cohorts",
+        ],
+    ].copy()
+    combined_daily_returns["gross_return"] = (
+        aligned_long_leg["gross_return"] + hedge_daily_returns["gross_return"]
+    )
+    combined_daily_returns["net_return"] = (
+        aligned_long_leg["net_return"] + hedge_daily_returns["net_return"]
+    )
+    combined_daily_returns["turnover"] = (
+        aligned_long_leg["turnover"] + hedge_daily_returns["turnover"]
+    )
+    combined_daily_returns["active_positions"] = (
+        aligned_long_leg["active_positions"] + hedge_daily_returns["active_positions"]
+    )
+    combined_daily_returns["gross_equity"] = (
+        1.0 + combined_daily_returns["gross_return"]
+    ).cumprod()
+    combined_daily_returns["net_equity"] = (
+        1.0 + combined_daily_returns["net_return"]
+    ).cumprod()
+    equity_curve = combined_daily_returns.loc[
+        :,
+        [DATE_COLUMN, "gross_equity", "net_equity"],
+    ].copy()
+
+    combined_trades = _build_long_short_trade_frame(
+        model_trades=model_trades,
+        qqq_benchmark=qqq_benchmark,
+        hedge_daily_returns=hedge_daily_returns,
+    )
+    metrics = compute_backtest_metrics(
+        daily_returns=combined_daily_returns,
+        trades=combined_trades,
+    )
+    summary = {
+        "strategy_name": strategy_name,
+        "task_type": "benchmark",
+        "hedge_symbol": "QQQ",
+        "long_trade_count": int(len(model_trades)),
+        "hedge_trade_count": int(len(qqq_benchmark.trades)),
+        "gross_exposure": 2.0,
+        "net_exposure": 0.0,
+        **metrics,
+    }
+    return BenchmarkBacktestResult(
+        strategy_name=strategy_name,
+        task_type="benchmark",
+        summary=summary,
+        daily_returns=combined_daily_returns.reset_index(drop=True),
+        equity_curve=equity_curve.reset_index(drop=True),
+        trades=combined_trades.reset_index(drop=True),
+        skipped_trades=qqq_benchmark.skipped_trades.reset_index(drop=True),
+    )
+
+
 def align_daily_returns_to_target_dates(
     daily_returns: pd.DataFrame,
     target_dates: pd.Series,
@@ -365,3 +455,47 @@ def _normalize_target_dates(target_dates: pd.Series) -> pd.Series:
     normalized = normalized.dt.tz_localize(None)
     normalized = normalized.dropna().drop_duplicates().sort_values().reset_index(drop=True)
     return normalized
+
+
+def _build_short_hedge_daily_returns(
+    qqq_daily_returns: pd.DataFrame,
+    cost_bps_per_side: float,
+) -> pd.DataFrame:
+    cost_rate = float(cost_bps_per_side) / 10_000.0
+    hedge_daily = qqq_daily_returns.loc[
+        :,
+        [DATE_COLUMN, "gross_return", "turnover", "active_positions", "active_cohorts"],
+    ].copy()
+    hedge_daily["gross_return"] = -qqq_daily_returns["gross_return"]
+    hedge_daily["net_return"] = -qqq_daily_returns["gross_return"] - (
+        qqq_daily_returns["turnover"] * cost_rate
+    )
+    return hedge_daily
+
+
+def _build_long_short_trade_frame(
+    *,
+    model_trades: pd.DataFrame,
+    qqq_benchmark: BenchmarkBacktestResult,
+    hedge_daily_returns: pd.DataFrame,
+) -> pd.DataFrame:
+    long_trades = model_trades.copy()
+    if not long_trades.empty:
+        long_trades["position_side"] = "long"
+        long_trades["leg_name"] = "long_leg"
+
+    qqq_trade = qqq_benchmark.trades.iloc[0].copy()
+    short_trade = qqq_trade.to_dict()
+    short_trade["position_side"] = "short"
+    short_trade["leg_name"] = "qqq_hedge"
+    short_trade["gross_trade_return"] = float(
+        (1.0 + hedge_daily_returns["gross_return"]).prod() - 1.0
+    )
+    short_trade["net_trade_return"] = float(
+        (1.0 + hedge_daily_returns["net_return"]).prod() - 1.0
+    )
+    short_trade_frame = pd.DataFrame([short_trade])
+
+    if long_trades.empty:
+        return short_trade_frame.reset_index(drop=True)
+    return pd.concat([long_trades, short_trade_frame], ignore_index=True, sort=False)

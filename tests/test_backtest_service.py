@@ -176,10 +176,11 @@ def test_backtest_service_runs_comparison_and_writes_comparison_artifacts(
         cost_bps_per_side=5,
     )
 
-    assert comparison["benchmark_count"] == 3
+    assert comparison["benchmark_count"] == 4
     assert Path(comparison["artifacts"]["summary_path"]).exists()
     assert Path(comparison["artifacts"]["table_path"]).exists()
     assert comparison["best_benchmark_by_sharpe_net"]["strategy_name"] in {
+        "long_short_qqq",
         "qqq_buy_and_hold",
         "equal_weight_universe_buy_and_hold",
         "simple_momentum_top_k",
@@ -193,6 +194,7 @@ def test_backtest_service_runs_comparison_and_writes_comparison_artifacts(
     )
     strategy_names = [row["strategy_name"] for row in report["table_rows"]]
     assert "hist_gbr" in strategy_names
+    assert "long_short_qqq" in strategy_names
     assert "qqq_buy_and_hold" in strategy_names
     assert "equal_weight_universe_buy_and_hold" in strategy_names
     assert "simple_momentum_top_k" in strategy_names

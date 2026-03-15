@@ -3,6 +3,7 @@ import pandas as pd
 from suffering.backtest.benchmarks import (
     align_daily_returns_to_target_dates,
     build_equal_weight_universe_buy_and_hold_benchmark,
+    build_long_top_k_short_qqq_benchmark,
     build_qqq_buy_and_hold_benchmark,
     build_simple_momentum_top_k_benchmark,
 )
@@ -110,3 +111,42 @@ def test_align_daily_returns_to_target_dates_fills_missing_days_without_future_i
     assert aligned.iloc[0]["gross_return"] == 0.0
     assert aligned.iloc[0]["net_equity"] == 1.0
     assert aligned.iloc[-1]["gross_return"] == 0.0
+
+
+def test_long_top_k_short_qqq_benchmark_builds_hedged_daily_returns() -> None:
+    target_dates = pd.Series(pd.date_range("2024-01-02", periods=4, freq="B"))
+    model_daily_returns = pd.DataFrame(
+        {
+            "date": target_dates,
+            "gross_return": [0.0, 0.02, 0.01, -0.01],
+            "net_return": [-0.001, 0.02, 0.01, -0.011],
+            "turnover": [1.0, 0.0, 0.0, 1.0],
+            "active_positions": [1.0, 1.0, 1.0, 1.0],
+            "active_cohorts": [1.0, 1.0, 1.0, 1.0],
+            "gross_equity": [1.0, 1.02, 1.0302, 1.019898],
+            "net_equity": [0.999, 1.01898, 1.0291698, 1.0178489322],
+        }
+    )
+    model_trades = pd.DataFrame(
+        {
+            "symbol": ["AAPL"],
+            "entry_date": [pd.Timestamp("2024-01-02")],
+            "exit_date": [pd.Timestamp("2024-01-05")],
+            "gross_trade_return": [0.019898],
+            "net_trade_return": [0.0178489322],
+        }
+    )
+
+    result = build_long_top_k_short_qqq_benchmark(
+        target_dates=target_dates,
+        model_daily_returns=model_daily_returns,
+        model_trades=model_trades,
+        qqq_price_frame=build_price_frame("QQQ", [100.0, 101.0, 103.0, 102.0]),
+        cost_bps_per_side=5,
+    )
+
+    assert result.strategy_name == "long_top_k_short_qqq"
+    assert result.summary["hedge_symbol"] == "QQQ"
+    assert result.summary["trade_count"] == 2
+    assert set(result.trades["position_side"]) == {"long", "short"}
+    assert result.daily_returns["date"].tolist() == target_dates.tolist()
