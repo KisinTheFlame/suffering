@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -45,3 +46,35 @@ def test_feature_service_requires_existing_raw_cache(tmp_path: Path) -> None:
         assert "suffering data-fetch AAPL" in str(exc)
     else:
         raise AssertionError("expected missing raw cache to raise FileNotFoundError")
+
+
+def test_feature_service_reuses_up_to_date_feature_cache(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    raw_storage = DailyDataStorage(data_dir=tmp_path)
+    raw_storage.write_daily_data("AAPL", build_sample_raw_frame())
+
+    service = FeatureService.from_settings(settings)
+    initial_frame = service.build_features_for_symbol("AAPL")
+
+    result = service.update_features_for_symbol("AAPL")
+
+    assert result.action == "cache_hit"
+    assert result.cached_rows == len(initial_frame)
+
+
+def test_feature_service_rebuilds_when_raw_cache_is_newer(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path)
+    raw_storage = DailyDataStorage(data_dir=tmp_path)
+    raw_storage.write_daily_data("AAPL", build_sample_raw_frame())
+
+    service = FeatureService.from_settings(settings)
+    initial_frame = service.build_features_for_symbol("AAPL")
+    raw_path = raw_storage.path_for_symbol("AAPL")
+    raw_path.touch()
+    time.sleep(0.01)
+    raw_path.touch()
+
+    result = service.update_features_for_symbol("AAPL")
+
+    assert result.action == "rebuilt"
+    assert result.cached_rows == len(initial_frame)

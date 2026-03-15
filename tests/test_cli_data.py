@@ -1,6 +1,7 @@
 import pandas as pd
 
 from suffering.cli import main
+from suffering.data.service import DailyDataUpdateResult
 from suffering.features.definitions import FEATURE_COLUMNS
 
 
@@ -32,13 +33,22 @@ class FakeService:
     def __init__(self) -> None:
         self.storage = FakeStorage()
 
-    def fetch_daily_data(
+    def update_daily_data(
         self,
         symbol: str,
         start_date: str | None = None,
         end_date: str | None = None,
-    ) -> pd.DataFrame:
-        return self.storage.read_daily_data("AAPL").assign(symbol=symbol.upper())
+        refresh: bool = False,
+    ) -> DailyDataUpdateResult:
+        frame = self.storage.read_daily_data("AAPL").assign(symbol=symbol.upper())
+        action = "full_refresh" if refresh else "cache_hit"
+        fetched_rows = len(frame) if refresh else 0
+        return DailyDataUpdateResult(
+            frame=frame,
+            action=action,
+            fetched_rows=fetched_rows,
+            cached_rows=len(frame),
+        )
 
 
 class FakeFeatureStorage:
@@ -64,13 +74,17 @@ class FakeFeatureService:
     def __init__(self) -> None:
         self.storage = FakeFeatureStorage()
 
-    def build_features_for_symbol(self, symbol: str) -> pd.DataFrame:
+    def update_features_for_symbol(self, symbol: str, refresh: bool = False):
         if symbol.upper() != "AAPL":
             raise FileNotFoundError(
                 f"raw daily data not found for {symbol.upper()}. "
                 f"Run `suffering data-fetch {symbol.upper()}` first."
             )
-        return self.storage.read_daily_features("AAPL").assign(symbol=symbol.upper())
+        from suffering.features.service import FeatureBuildResult
+
+        frame = self.storage.read_daily_features("AAPL").assign(symbol=symbol.upper())
+        action = "rebuilt" if refresh else "cache_hit"
+        return FeatureBuildResult(frame=frame, action=action, cached_rows=len(frame))
 
     def read_features(self, symbol: str) -> pd.DataFrame:
         return self.storage.read_daily_features(symbol)
@@ -83,7 +97,17 @@ def test_data_fetch_command_can_be_called(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "AAPL: 1 rows cached at data/raw/daily/AAPL.csv" in captured.out
+    assert "AAPL: cache hit, 1 cached rows at data/raw/daily/AAPL.csv" in captured.out
+
+
+def test_data_fetch_command_supports_refresh(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("suffering.cli.build_data_service", lambda settings=None: FakeService())
+
+    exit_code = main(["data-fetch", "AAPL", "--refresh"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "AAPL: full refresh cached 1 rows at data/raw/daily/AAPL.csv" in captured.out
 
 
 def test_data_show_command_can_be_called(monkeypatch, capsys) -> None:
@@ -117,7 +141,26 @@ def test_feature_build_command_can_be_called(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "AAPL: 2 rows, 18 feature columns cached at data/features/daily/AAPL.csv" in captured.out
+    assert (
+        "AAPL: cache hit, 2 rows and 18 feature columns at data/features/daily/AAPL.csv"
+        in captured.out
+    )
+
+
+def test_feature_build_command_supports_refresh(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_feature_service",
+        lambda settings=None: FakeFeatureService(),
+    )
+
+    exit_code = main(["feature-build", "AAPL", "--refresh"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert (
+        "AAPL: rebuilt 2 rows, 18 feature columns cached at data/features/daily/AAPL.csv"
+        in captured.out
+    )
 
 
 def test_feature_show_command_can_be_called(monkeypatch, capsys) -> None:

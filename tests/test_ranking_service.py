@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -60,3 +61,50 @@ def test_ranking_service_requires_existing_feature_cache_for_dataset_build(tmp_p
         assert "suffering feature-build AAPL" in str(exc)
     else:
         raise AssertionError("expected missing feature cache to raise FileNotFoundError")
+
+
+def test_ranking_service_reuses_up_to_date_label_and_dataset_caches(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, default_symbols=["AAPL"])
+    raw_storage = DailyDataStorage(data_dir=tmp_path)
+    raw_storage.write_daily_data("AAPL", build_sample_raw_frame("AAPL"))
+
+    feature_service = FeatureService.from_settings(settings)
+    feature_service.build_features_for_symbol("AAPL")
+
+    service = RankingService.from_settings(settings)
+    label_frame = service.build_label_for_symbol("AAPL")
+    dataset_frame = service.build_panel_dataset()
+
+    label_result = service.update_label_for_symbol("AAPL")
+    dataset_result = service.update_panel_dataset()
+
+    assert label_result.action == "cache_hit"
+    assert label_result.cached_rows == len(label_frame)
+    assert dataset_result.action == "cache_hit"
+    assert dataset_result.cached_rows == len(dataset_frame)
+
+
+def test_ranking_service_rebuilds_label_and_dataset_when_inputs_are_newer(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path, default_symbols=["AAPL"])
+    raw_storage = DailyDataStorage(data_dir=tmp_path)
+    raw_storage.write_daily_data("AAPL", build_sample_raw_frame("AAPL"))
+
+    feature_service = FeatureService.from_settings(settings)
+    feature_service.build_features_for_symbol("AAPL")
+
+    service = RankingService.from_settings(settings)
+    label_frame = service.build_label_for_symbol("AAPL")
+    dataset_frame = service.build_panel_dataset()
+
+    raw_storage.path_for_symbol("AAPL").touch()
+    label_result = service.update_label_for_symbol("AAPL")
+
+    feature_service.storage.path_for_symbol("AAPL").touch()
+    service.storage.label_path_for_symbol("AAPL").touch()
+    time.sleep(0.01)
+    dataset_result = service.update_panel_dataset()
+
+    assert label_result.action == "rebuilt"
+    assert label_result.cached_rows == len(label_frame)
+    assert dataset_result.action == "rebuilt"
+    assert dataset_result.cached_rows == len(dataset_frame)

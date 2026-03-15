@@ -1,6 +1,7 @@
 import pandas as pd
 
 from suffering.cli import main
+from suffering.ranking.service import DatasetBuildResult, LabelBuildResult
 
 
 class FakeRankingStorage:
@@ -31,21 +32,30 @@ class FakeRankingService:
             }
         )
 
-    def build_label_for_symbol(self, symbol: str) -> pd.DataFrame:
+    def update_label_for_symbol(self, symbol: str, refresh: bool = False) -> LabelBuildResult:
         if symbol.upper() != "AAPL":
             raise FileNotFoundError(
                 f"raw daily data not found for {symbol.upper()}. "
                 f"Run `suffering data-fetch {symbol.upper()}` first."
             )
-        return self._label_frame
+        return LabelBuildResult(
+            frame=self._label_frame,
+            action="rebuilt" if refresh else "cache_hit",
+            cached_rows=len(self._label_frame),
+        )
 
-    def build_panel_dataset(
+    def update_panel_dataset(
         self,
         symbols: list[str] | None = None,
         dataset_name: str | None = None,
         write_cache: bool = True,
-    ) -> pd.DataFrame:
-        return self._dataset_frame
+        refresh: bool = False,
+    ) -> DatasetBuildResult:
+        return DatasetBuildResult(
+            frame=self._dataset_frame,
+            action="rebuilt" if refresh else "cache_hit",
+            cached_rows=len(self._dataset_frame),
+        )
 
     def read_panel_dataset(self, dataset_name: str | None = None) -> pd.DataFrame:
         if dataset_name == "missing":
@@ -63,7 +73,26 @@ def test_label_build_command_can_be_called(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "AAPL: 2 rows, 1 labeled rows cached at data/labels/daily/AAPL.csv" in captured.out
+    assert (
+        "AAPL: cache hit, 2 rows and 1 labeled rows at data/labels/daily/AAPL.csv"
+        in captured.out
+    )
+
+
+def test_label_build_command_supports_refresh(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_ranking_service",
+        lambda settings=None: FakeRankingService(),
+    )
+
+    exit_code = main(["label-build", "AAPL", "--refresh"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert (
+        "AAPL: rebuilt 2 rows, 1 labeled rows cached at data/labels/daily/AAPL.csv"
+        in captured.out
+    )
 
 
 def test_dataset_build_command_can_be_called(monkeypatch, capsys) -> None:
@@ -76,8 +105,22 @@ def test_dataset_build_command_can_be_called(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "action: cache_hit" in captured.out
     assert "rows: 2" in captured.out
     assert "cached at: data/datasets/daily/panel_5d.csv" in captured.out
+
+
+def test_dataset_build_command_supports_refresh(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_ranking_service",
+        lambda settings=None: FakeRankingService(),
+    )
+
+    exit_code = main(["dataset-build", "AAPL", "--refresh"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "action: rebuilt" in captured.out
 
 
 def test_dataset_show_command_can_be_called(monkeypatch, capsys) -> None:

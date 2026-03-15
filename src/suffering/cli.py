@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--end-date",
         help="Inclusive end date, for example 2024-12-31",
     )
+    data_fetch_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force a full refresh instead of incrementally reusing cached data.",
+    )
 
     data_show_parser = subparsers.add_parser(
         "data-show",
@@ -65,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
         "symbols",
         nargs="*",
         help="Ticker symbols such as AAPL MSFT",
+    )
+    feature_build_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force a rebuild instead of reusing up-to-date feature cache files.",
     )
 
     feature_show_parser = subparsers.add_parser(
@@ -82,6 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         help="Ticker symbols such as AAPL MSFT",
     )
+    label_build_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force a rebuild instead of reusing up-to-date label cache files.",
+    )
 
     dataset_build_parser = subparsers.add_parser(
         "dataset-build",
@@ -95,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
     dataset_build_parser.add_argument(
         "--dataset-name",
         help="Dataset cache name, defaulting to the configured panel dataset name.",
+    )
+    dataset_build_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force a rebuild instead of reusing an up-to-date dataset cache file.",
     )
 
     dataset_show_parser = subparsers.add_parser(
@@ -423,7 +443,12 @@ def run_doctor() -> int:
     return 0
 
 
-def run_data_fetch(symbols: list[str], start_date: str | None, end_date: str | None) -> int:
+def run_data_fetch(
+    symbols: list[str],
+    start_date: str | None,
+    end_date: str | None,
+    refresh: bool = False,
+) -> int:
     settings = get_settings()
     service = build_data_service(settings)
     resolved_symbols = resolve_symbols(symbols, settings)
@@ -435,10 +460,11 @@ def run_data_fetch(symbols: list[str], start_date: str | None, end_date: str | N
     )
     for symbol in resolved_symbols:
         try:
-            frame = service.fetch_daily_data(
+            result = service.update_daily_data(
                 symbol=symbol,
                 start_date=start_date,
                 end_date=end_date,
+                refresh=refresh,
             )
         except Exception as exc:
             failed_symbols.append(symbol)
@@ -446,7 +472,15 @@ def run_data_fetch(symbols: list[str], start_date: str | None, end_date: str | N
             continue
 
         path = service.storage.path_for_symbol(symbol)
-        print(f"{symbol}: {len(frame)} rows cached at {path}")
+        if result.action == "cache_hit":
+            print(f"{symbol}: cache hit, {result.cached_rows} cached rows at {path}")
+        elif result.action == "incremental_update":
+            print(
+                f"{symbol}: incremental update fetched {result.fetched_rows} new rows, "
+                f"{result.cached_rows} cached rows at {path}"
+            )
+        else:
+            print(f"{symbol}: full refresh cached {result.cached_rows} rows at {path}")
 
     return 1 if failed_symbols else 0
 
@@ -468,7 +502,7 @@ def run_data_show(symbol: str) -> int:
     return 0
 
 
-def run_feature_build(symbols: list[str]) -> int:
+def run_feature_build(symbols: list[str], refresh: bool = False) -> int:
     settings = get_settings()
     service = build_feature_service(settings)
     resolved_symbols = resolve_symbols(symbols, settings)
@@ -477,16 +511,23 @@ def run_feature_build(symbols: list[str]) -> int:
     print(f"building daily features for {len(resolved_symbols)} symbol(s) ...")
     for symbol in resolved_symbols:
         try:
-            frame = service.build_features_for_symbol(symbol)
+            result = service.update_features_for_symbol(symbol, refresh=refresh)
         except FileNotFoundError as exc:
             failed_symbols.append(symbol)
             print(f"{symbol}: {exc}")
             continue
 
         path = service.storage.path_for_symbol(symbol)
-        print(
-            f"{symbol}: {len(frame)} rows, {len(FEATURE_COLUMNS)} feature columns cached at {path}"
-        )
+        if result.action == "cache_hit":
+            print(
+                f"{symbol}: cache hit, {result.cached_rows} rows and "
+                f"{len(FEATURE_COLUMNS)} feature columns at {path}"
+            )
+        else:
+            print(
+                f"{symbol}: rebuilt {result.cached_rows} rows, "
+                f"{len(FEATURE_COLUMNS)} feature columns cached at {path}"
+            )
 
     return 1 if failed_symbols else 0
 
@@ -512,7 +553,7 @@ def run_feature_show(symbol: str) -> int:
     return 0
 
 
-def run_label_build(symbols: list[str]) -> int:
+def run_label_build(symbols: list[str], refresh: bool = False) -> int:
     settings = get_settings()
     service = build_ranking_service(settings)
     resolved_symbols = resolve_symbols(symbols, settings)
@@ -524,38 +565,57 @@ def run_label_build(symbols: list[str]) -> int:
     )
     for symbol in resolved_symbols:
         try:
-            frame = service.build_label_for_symbol(symbol)
+            result = service.update_label_for_symbol(symbol, refresh=refresh)
         except FileNotFoundError as exc:
             failed_symbols.append(symbol)
             print(f"{symbol}: {exc}")
             continue
 
         path = service.storage.label_path_for_symbol(symbol)
-        valid_rows = int(frame[FUTURE_RETURN_5D_COLUMN].notna().sum())
-        print(f"{symbol}: {len(frame)} rows, {valid_rows} labeled rows cached at {path}")
+        valid_rows = int(result.frame[FUTURE_RETURN_5D_COLUMN].notna().sum())
+        if result.action == "cache_hit":
+            print(
+                f"{symbol}: cache hit, {result.cached_rows} rows and "
+                f"{valid_rows} labeled rows at {path}"
+            )
+        else:
+            print(
+                f"{symbol}: rebuilt {result.cached_rows} rows, "
+                f"{valid_rows} labeled rows cached at {path}"
+            )
 
     return 1 if failed_symbols else 0
 
 
-def run_dataset_build(symbols: list[str], dataset_name: str | None) -> int:
+def run_dataset_build(
+    symbols: list[str],
+    dataset_name: str | None,
+    refresh: bool = False,
+) -> int:
     settings = get_settings()
     service = build_ranking_service(settings)
     resolved_dataset_name = dataset_name or settings.default_dataset_name
 
     print(f"building panel dataset `{resolved_dataset_name}` ...")
     try:
-        frame = service.build_panel_dataset(symbols=symbols, dataset_name=resolved_dataset_name)
+        result = service.update_panel_dataset(
+            symbols=symbols,
+            dataset_name=resolved_dataset_name,
+            refresh=refresh,
+        )
     except FileNotFoundError as exc:
         print(str(exc))
         return 1
 
     path = service.storage.dataset_path(resolved_dataset_name)
+    frame = result.frame
     symbol_count = frame["symbol"].nunique() if "symbol" in frame.columns else 0
     if frame.empty:
         date_range = "n/a"
     else:
         date_range = f"{frame['date'].min().date()} -> {frame['date'].max().date()}"
 
+    print(f"action: {result.action}")
     print(f"rows: {len(frame)}")
     print(f"columns: {len(frame.columns)}")
     print(f"date_range: {date_range}")
@@ -1357,17 +1417,22 @@ def main(argv: list[str] | None = None) -> int:
             symbols=args.symbols,
             start_date=args.start_date,
             end_date=args.end_date,
+            refresh=args.refresh,
         )
     if args.command == "data-show":
         return run_data_show(symbol=args.symbol)
     if args.command == "feature-build":
-        return run_feature_build(symbols=args.symbols)
+        return run_feature_build(symbols=args.symbols, refresh=args.refresh)
     if args.command == "feature-show":
         return run_feature_show(symbol=args.symbol)
     if args.command == "label-build":
-        return run_label_build(symbols=args.symbols)
+        return run_label_build(symbols=args.symbols, refresh=args.refresh)
     if args.command == "dataset-build":
-        return run_dataset_build(symbols=args.symbols, dataset_name=args.dataset_name)
+        return run_dataset_build(
+            symbols=args.symbols,
+            dataset_name=args.dataset_name,
+            refresh=args.refresh,
+        )
     if args.command == "dataset-show":
         return run_dataset_show(dataset_name=args.dataset_name)
     if args.command == "train-baseline":
