@@ -847,6 +847,49 @@ uv run python scripts/remote_wsl_run.py \
   --raw-command "uv run python scripts/run_nasdaq100_current_static_pipeline.py"
 ```
 
+如果你想直接在远端完整跑一遍研究主线，并把报告和关键 artifact 拉回本地，可以用：
+
+```bash
+uv run python scripts/remote_pipeline_run.py \
+  --ssh-target gpu-wsl \
+  --remote-dir /home/kisin/workspace/suffering \
+  --model xgb_ranker \
+  --top-k 5 \
+  --holding-days 5 \
+  --cost-bps-per-side 5
+```
+
+这个脚本会顺序执行：
+
+1. `train-walkforward`
+2. `backtest-walkforward`
+3. `backtest-compare`
+4. `report-generate`
+5. 把远端的报告和关键 JSON / CSV 结果拉回本地
+
+默认会把结果放到：
+
+```text
+artifacts/remote_pipeline/<model>_top<k>_h<holding_days>_cost<round_trip_cost>/
+```
+
+其中至少会包含：
+
+- `reports/research/<model>_research_report.md`
+- `reports/<model>_walkforward_summary.json`
+- `reports/<model>_walkforward_folds.csv`
+- `predictions/<model>_walkforward_test_predictions.csv`
+- `backtests/<stem>_summary.json`
+- `backtests/comparisons/<stem>_comparison_summary.json`
+- `backtests/comparisons/<stem>_comparison_table.csv`
+- `run_manifest.json`
+
+如果还想把 robustness 一起跑掉并拉回本地，可以加：
+
+```bash
+--with-robustness
+```
+
 ### 这套流程适合做什么
 
 - 本地修改代码、跑测试、提交 commit
