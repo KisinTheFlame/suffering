@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import pandas as pd
@@ -20,6 +23,13 @@ class DailyDataUpdateResult:
     action: str
     fetched_rows: int
     cached_rows: int
+
+
+@dataclass(frozen=True)
+class BatchDailyDataUpdateResult:
+    symbol: str
+    result: DailyDataUpdateResult | None
+    error: Exception | None
 
 
 class DailyDataService:
@@ -193,6 +203,53 @@ class DailyDataService:
             for symbol in resolved_symbols
         }
 
+    def update_many_daily_data(
+        self,
+        symbols: list[str],
+        start_date: str | None = None,
+        end_date: str | None = None,
+        refresh: bool = False,
+        max_workers: int | None = None,
+        retries: int = 1,
+    ) -> list[BatchDailyDataUpdateResult]:
+        resolved_symbols = [
+            str(symbol).strip().upper()
+            for symbol in symbols
+            if str(symbol).strip()
+        ]
+        if not resolved_symbols:
+            return []
+
+        resolved_max_workers = self._resolve_data_fetch_max_workers(
+            requested_max_workers=max_workers,
+            symbol_count=len(resolved_symbols),
+        )
+        if resolved_max_workers <= 1:
+            return [
+                self._update_daily_data_with_retries(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    refresh=refresh,
+                    retries=retries,
+                )
+                for symbol in resolved_symbols
+            ]
+
+        with ThreadPoolExecutor(max_workers=resolved_max_workers) as executor:
+            return list(
+                executor.map(
+                    lambda symbol: self._update_daily_data_with_retries(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        refresh=refresh,
+                        retries=retries,
+                    ),
+                    resolved_symbols,
+                )
+            )
+
     def _fetch_range_or_empty(
         self,
         symbol: str,
@@ -248,6 +305,51 @@ class DailyDataService:
         if requested_end_ts > latest_expected_ts:
             return latest_expected_ts.strftime("%Y-%m-%d")
         return requested_end_ts.strftime("%Y-%m-%d")
+
+    def _resolve_data_fetch_max_workers(
+        self,
+        *,
+        requested_max_workers: int | None,
+        symbol_count: int,
+    ) -> int:
+        if symbol_count <= 1:
+            return 1
+
+        configured_max_workers = (
+            requested_max_workers
+            if requested_max_workers is not None
+            else self.settings.data_fetch_max_workers
+        )
+        if configured_max_workers is None:
+            configured_max_workers = min(8, os.cpu_count() or 1, symbol_count)
+        return max(1, min(int(configured_max_workers), symbol_count))
+
+    def _update_daily_data_with_retries(
+        self,
+        *,
+        symbol: str,
+        start_date: str | None,
+        end_date: str | None,
+        refresh: bool,
+        retries: int,
+    ) -> BatchDailyDataUpdateResult:
+        last_error: Exception | None = None
+        total_attempts = max(1, int(retries))
+        for attempt in range(1, total_attempts + 1):
+            try:
+                result = self.update_daily_data(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    refresh=refresh,
+                )
+                return BatchDailyDataUpdateResult(symbol=symbol, result=result, error=None)
+            except Exception as exc:  # pragma: no cover - exercised via batch error behavior
+                last_error = exc
+                if attempt < total_attempts:
+                    time.sleep(float(attempt))
+
+        return BatchDailyDataUpdateResult(symbol=symbol, result=None, error=last_error)
 
 
 def build_data_service(settings: Settings | None = None) -> DailyDataService:

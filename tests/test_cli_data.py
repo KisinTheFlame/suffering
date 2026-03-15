@@ -32,6 +32,7 @@ class FakeStorage:
 class FakeService:
     def __init__(self) -> None:
         self.storage = FakeStorage()
+        self.last_max_workers: int | None = None
 
     def update_daily_data(
         self,
@@ -49,6 +50,32 @@ class FakeService:
             fetched_rows=fetched_rows,
             cached_rows=len(frame),
         )
+
+    def update_many_daily_data(
+        self,
+        symbols: list[str],
+        start_date: str | None = None,
+        end_date: str | None = None,
+        refresh: bool = False,
+        max_workers: int | None = None,
+        retries: int = 1,
+    ):
+        from suffering.data.service import BatchDailyDataUpdateResult
+
+        self.last_max_workers = max_workers
+        return [
+            BatchDailyDataUpdateResult(
+                symbol=symbol.upper(),
+                result=self.update_daily_data(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    refresh=refresh,
+                ),
+                error=None,
+            )
+            for symbol in symbols
+        ]
 
 
 class FakeFeatureStorage:
@@ -108,6 +135,18 @@ def test_data_fetch_command_supports_refresh(monkeypatch, capsys) -> None:
 
     assert exit_code == 0
     assert "AAPL: full refresh cached 1 rows at data/raw/daily/AAPL.csv" in captured.out
+
+
+def test_data_fetch_command_accepts_max_workers(monkeypatch, capsys) -> None:
+    fake_service = FakeService()
+    monkeypatch.setattr("suffering.cli.build_data_service", lambda settings=None: fake_service)
+
+    exit_code = main(["data-fetch", "AAPL", "--max-workers", "4"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "AAPL: cache hit, 1 cached rows at data/raw/daily/AAPL.csv" in captured.out
+    assert fake_service.last_max_workers == 4
 
 
 def test_data_show_command_can_be_called(monkeypatch, capsys) -> None:

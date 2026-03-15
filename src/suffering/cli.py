@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force a full refresh instead of incrementally reusing cached data.",
     )
+    data_fetch_parser.add_argument(
+        "--max-workers",
+        type=int,
+        help="Maximum concurrent worker threads used for fetching raw data.",
+    )
 
     data_show_parser = subparsers.add_parser(
         "data-show",
@@ -453,29 +458,32 @@ def run_data_fetch(
     start_date: str | None,
     end_date: str | None,
     refresh: bool = False,
+    max_workers: int | None = None,
 ) -> int:
     settings = get_settings()
     service = build_data_service(settings)
     resolved_symbols = resolve_symbols(symbols, settings)
-    failed_symbols: list[str] = []
 
     print(
         f"fetching daily data for {len(resolved_symbols)} symbol(s) "
         f"via {settings.default_data_provider} ..."
     )
-    for symbol in resolved_symbols:
-        try:
-            result = service.update_daily_data(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                refresh=refresh,
-            )
-        except Exception as exc:
+    batch_results = service.update_many_daily_data(
+        resolved_symbols,
+        start_date=start_date,
+        end_date=end_date,
+        refresh=refresh,
+        max_workers=max_workers,
+    )
+    failed_symbols: list[str] = []
+    for batch_result in batch_results:
+        symbol = batch_result.symbol
+        if batch_result.error is not None or batch_result.result is None:
             failed_symbols.append(symbol)
-            print(f"{symbol}: fetch failed: {exc}")
+            print(f"{symbol}: fetch failed: {batch_result.error}")
             continue
 
+        result = batch_result.result
         path = service.storage.path_for_symbol(symbol)
         if result.action == "cache_hit":
             print(f"{symbol}: cache hit, {result.cached_rows} cached rows at {path}")
@@ -1425,6 +1433,7 @@ def main(argv: list[str] | None = None) -> int:
             start_date=args.start_date,
             end_date=args.end_date,
             refresh=args.refresh,
+            max_workers=args.max_workers,
         )
     if args.command == "data-show":
         return run_data_show(symbol=args.symbol)

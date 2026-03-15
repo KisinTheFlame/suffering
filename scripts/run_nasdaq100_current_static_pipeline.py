@@ -7,8 +7,6 @@ constituents, then runs the existing local pipeline over 2018-01-01 to
 
 from __future__ import annotations
 
-import time
-
 from suffering.backtest import build_backtest_service
 from suffering.data import build_data_service
 from suffering.features import build_feature_service
@@ -117,44 +115,36 @@ def fetch_raw_data(data_service) -> list[str]:
     failed_symbols: list[str] = []
     total = len(FETCH_SYMBOLS)
     print(f"fetching_raw_data: {total} symbol(s)")
-    for index, symbol in enumerate(FETCH_SYMBOLS, start=1):
-        success = False
-        last_error: Exception | None = None
-        for attempt in range(1, FETCH_RETRIES + 1):
-            try:
-                result = data_service.update_daily_data(
-                    symbol=symbol,
-                    start_date=START_DATE,
-                    end_date=END_DATE,
-                )
-            except Exception as exc:
-                last_error = exc
-                print(
-                    f"[fetch {index}/{total}] {symbol} attempt {attempt}/{FETCH_RETRIES} failed: "
-                    f"{exc}"
-                )
-                time.sleep(float(attempt))
-                continue
-
-            if result.action == "cache_hit":
-                print(
-                    f"[fetch {index}/{total}] {symbol}: "
-                    f"cache hit ({result.cached_rows} rows)"
-                )
-            elif result.action == "incremental_update":
-                print(
-                    f"[fetch {index}/{total}] {symbol}: "
-                    f"incremental update (+{result.fetched_rows} rows, {result.cached_rows} cached)"
-                )
-            else:
-                print(f"[fetch {index}/{total}] {symbol}: full refresh ({result.cached_rows} rows)")
-            success = True
-            break
-
-        if not success:
+    batch_results = data_service.update_many_daily_data(
+        FETCH_SYMBOLS,
+        start_date=START_DATE,
+        end_date=END_DATE,
+        max_workers=data_service.settings.data_fetch_max_workers,
+        retries=FETCH_RETRIES,
+    )
+    for index, batch_result in enumerate(batch_results, start=1):
+        symbol = batch_result.symbol
+        if batch_result.error is not None or batch_result.result is None:
             failed_symbols.append(symbol)
-            if last_error is not None:
-                print(f"[fetch {index}/{total}] {symbol}: giving up after retries ({last_error})")
+            print(
+                f"[fetch {index}/{total}] {symbol}: "
+                f"giving up after retries ({batch_result.error})"
+            )
+            continue
+
+        result = batch_result.result
+        if result.action == "cache_hit":
+            print(
+                f"[fetch {index}/{total}] {symbol}: "
+                f"cache hit ({result.cached_rows} rows)"
+            )
+        elif result.action == "incremental_update":
+            print(
+                f"[fetch {index}/{total}] {symbol}: "
+                f"incremental update (+{result.fetched_rows} rows, {result.cached_rows} cached)"
+            )
+        else:
+            print(f"[fetch {index}/{total}] {symbol}: full refresh ({result.cached_rows} rows)")
     return failed_symbols
 
 

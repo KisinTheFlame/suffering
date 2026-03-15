@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     artifacts_dir: Path = Path("artifacts")
     default_data_provider: str = "yfinance"
+    data_fetch_max_workers: int | None = None
     default_start_date: str = "2020-01-01"
     default_end_date: str | None = None
     default_symbols: list[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"]
@@ -67,6 +68,15 @@ class Settings(BaseSettings):
     def parse_default_symbols(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip().upper() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("data_fetch_max_workers", mode="before")
+    @classmethod
+    def parse_data_fetch_max_workers(cls, value: object) -> object:
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            return int(value.strip())
         return value
 
     @field_validator(
@@ -122,6 +132,15 @@ class Settings(BaseSettings):
     def validate_positive_defaults(cls, value: int) -> int:
         if value < 1:
             raise ValueError("backtest integer defaults must be at least 1")
+        return value
+
+    @field_validator("data_fetch_max_workers")
+    @classmethod
+    def validate_data_fetch_max_workers(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if value < 1:
+            raise ValueError("data_fetch_max_workers must be at least 1 when set")
         return value
 
     @field_validator("default_cost_bps_per_side", "default_report_cost_bps_per_side")
