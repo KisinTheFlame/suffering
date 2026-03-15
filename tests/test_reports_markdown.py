@@ -17,10 +17,6 @@ def build_report_context() -> dict[str, object]:
         },
         "available_artifacts": [{"name": "walkforward_summary", "path": "a.json"}],
         "missing_artifacts": [{"name": "robustness_summary", "path": "b.json"}],
-        "executive_summary": [
-            "回测净 Sharpe 为 0.8600，净收益为 117.95%，净最大回撤为 -46.46%。",
-            "模型当前在净 Sharpe 上优于 simple momentum。",
-        ],
         "walkforward": {
             "available": True,
             "fold_count": 4,
@@ -28,7 +24,6 @@ def build_report_context() -> dict[str, object]:
             "top_5_mean_future_return": "0.56%",
             "top_10_mean_future_return": "0.55%",
             "ndcg_at_5_mean": "0.6038",
-            "stability_summary": "不同 fold 结果分化较大，因此稳定性仍然有限。",
             "notes": [],
             "metric_rows": [
                 {
@@ -106,25 +101,12 @@ def build_report_context() -> dict[str, object]:
                     "average_daily_turnover": "39.80%",
                 },
             ],
-            "interpretation": [
-                "模型当前在净 Sharpe 上优于 simple momentum。",
-                "模型当前在净 Sharpe 上落后于 equal_weight_universe_buy_and_hold。",
-            ],
             "missing_items": ["qqq_buy_and_hold"],
         },
         "robustness": {
             "available": False,
             "missing_message": "未找到 robustness summary",
         },
-        "key_caveats": [
-            "当前股票池仍然偏小，且主要来自本地已缓存股票。",
-            "交易成本仍采用简化的固定 bps 模型。",
-        ],
-        "next_research_steps": [
-            "模型相对 simple momentum 的优势仍弱，"
-            "建议先回头审视特征与标签设计，而不是继续堆模型复杂度。",
-            "下一步先生成 robustness artifacts，确认当前结果不是单一参数点偶然有效。",
-        ],
     }
 
 
@@ -132,7 +114,6 @@ def test_render_markdown_report_includes_required_sections_and_tables() -> None:
     markdown = render_markdown_report(build_report_context())
 
     assert "# 研究报告：xgb_ranker" in markdown
-    assert "## 执行摘要" in markdown
     assert "## Walk-Forward 验证摘要" in markdown
     assert "## 回测摘要" in markdown
     assert "## 基准对比" in markdown
@@ -140,6 +121,8 @@ def test_render_markdown_report_includes_required_sections_and_tables() -> None:
     assert "| 策略名 | 净总收益 | 净 Sharpe |" in markdown
     assert "对应 artifact 缺失：未找到 robustness summary" in markdown
     assert "缺失的可选 artifact：qqq_buy_and_hold" in markdown
+    assert "执行摘要" not in markdown
+    assert "下一步研究建议" not in markdown
 
 
 def test_render_markdown_report_marks_missing_artifacts_in_metadata() -> None:

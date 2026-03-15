@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from suffering.data.models import DATE_COLUMN, SYMBOL_COLUMN
@@ -68,6 +69,13 @@ def build_daily_features(frame: pd.DataFrame) -> pd.DataFrame:
     output["avg_volume_5d"] = volume.rolling(window=5, min_periods=5).mean()
     output["avg_volume_20d"] = volume.rolling(window=20, min_periods=20).mean()
     output["avg_dollar_volume_20d"] = (close * volume).rolling(window=20, min_periods=20).mean()
+
+    numeric_columns = output.select_dtypes(include=["number"]).columns.tolist()
+    if numeric_columns:
+        output.loc[:, numeric_columns] = output.loc[:, numeric_columns].replace(
+            [np.inf, -np.inf],
+            np.nan,
+        )
 
     return (
         output.loc[:, FEATURE_OUTPUT_COLUMNS]

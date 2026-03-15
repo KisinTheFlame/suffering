@@ -20,18 +20,9 @@ def render_markdown_report(context: dict[str, Any]) -> str:
         f"- 已读取 artifact：{_format_artifact_names(context['available_artifacts'])}",
         f"- 缺失 artifact：{_format_artifact_names(context['missing_artifacts'])}",
         "",
-        "## 执行摘要",
+        "## Walk-Forward 验证摘要",
         "",
     ]
-    lines.extend(_render_bullets(context["executive_summary"]))
-
-    lines.extend(
-        [
-            "",
-            "## Walk-Forward 验证摘要",
-            "",
-        ]
-    )
     lines.extend(_render_walkforward_section(context["walkforward"]))
 
     lines.extend(["", "## 回测摘要", ""])
@@ -42,12 +33,6 @@ def render_markdown_report(context: dict[str, Any]) -> str:
 
     lines.extend(["", "## 稳健性摘要", ""])
     lines.extend(_render_robustness_section(context["robustness"]))
-
-    lines.extend(["", "## 关键注意事项", ""])
-    lines.extend(_render_bullets(context["key_caveats"]))
-
-    lines.extend(["", "## 下一步研究建议", ""])
-    lines.extend(_render_bullets(context["next_research_steps"]))
     lines.append("")
     return "\n".join(lines)
 
@@ -62,10 +47,9 @@ def _render_walkforward_section(section: dict[str, Any]) -> list[str]:
         f"- `top_5_mean_future_return`：{section['top_5_mean_future_return']}",
         f"- `top_10_mean_future_return`：{section['top_10_mean_future_return']}",
         f"- `ndcg_at_5_mean`：{section['ndcg_at_5_mean']}",
-        f"- 稳定性简述：{section['stability_summary']}",
     ]
     if section["notes"]:
-        lines.append(f"- 备注：{'; '.join(section['notes'])}")
+        lines.append(f"- artifact notes：{'; '.join(section['notes'])}")
     if section["metric_rows"]:
         lines.extend(["", _render_table(section["metric_rows"], section["metric_columns"])])
     if section["fold_rows"]:
@@ -121,8 +105,6 @@ def _render_benchmark_section(section: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     if section["table_rows"]:
         lines.append(_render_table(section["table_rows"], section["columns"]))
-        lines.append("")
-    lines.extend(_render_bullets(section["interpretation"]))
     if section["missing_items"]:
         lines.append("")
         lines.append(f"缺失的可选 artifact：{', '.join(section['missing_items'])}")
@@ -150,8 +132,9 @@ def _render_robustness_section(section: dict[str, Any]) -> list[str]:
             "- `whether_model_beats_simple_momentum_on_best_total_return`："
             f"{section['whether_model_beats_simple_momentum_on_best_total_return']}"
         ),
-        f"- `robustness_notes`：{'; '.join(section['robustness_notes'])}",
     ]
+    if section["robustness_notes"]:
+        lines.append(f"- `robustness_notes`：{'; '.join(section['robustness_notes'])}")
     if section["top_config_rows"]:
         lines.extend(
             [

@@ -300,25 +300,6 @@ class ReportService:
             robustness_table=robustness_table,
         )
 
-        executive_summary = self._build_executive_summary(
-            walkforward_summary=walkforward_summary,
-            backtest_summary=backtest_summary,
-            comparison_rows=comparison_rows,
-            robustness_summary=robustness_summary,
-        )
-        key_caveats = self._build_key_caveats(
-            walkforward_predictions=walkforward_predictions,
-            walkforward_summary=walkforward_summary,
-            backtest_summary=backtest_summary,
-            robustness_summary=robustness_summary,
-        )
-        next_research_steps = self._build_next_research_steps(
-            walkforward_summary=walkforward_summary,
-            backtest_summary=backtest_summary,
-            comparison_rows=comparison_rows,
-            robustness_summary=robustness_summary,
-        )
-
         return {
             "metadata": {
                 "model_name": model_name,
@@ -331,13 +312,10 @@ class ReportService:
             },
             "available_artifacts": artifact_bundle["available_artifacts"],
             "missing_artifacts": artifact_bundle["missing_artifacts"],
-            "executive_summary": executive_summary,
             "walkforward": walkforward_section,
             "backtest": backtest_section,
             "benchmark_comparison": benchmark_section,
             "robustness": robustness_section,
-            "key_caveats": key_caveats,
-            "next_research_steps": next_research_steps,
         }
 
     def _load_optional_json(
@@ -491,10 +469,8 @@ class ReportService:
                     if column in fold_snapshot.columns
                 ],
             ].to_dict(orient="records")
-            stability_summary = self._summarize_fold_stability(fold_snapshot)
         else:
             missing_items.append("walkforward_folds")
-            stability_summary = self._summarize_metric_stability(metrics_summary)
 
         return {
             "available": True,
@@ -513,11 +489,7 @@ class ReportService:
             "ndcg_at_5_mean": _format_optional_value(
                 metrics_summary.get("ndcg_at_5_mean", {}).get("mean")
             ),
-            "stability_summary": stability_summary,
-            "notes": [
-                _translate_report_note(note)
-                for note in list(walkforward_summary.get("notes", []))
-            ],
+            "notes": [str(note) for note in list(walkforward_summary.get("notes", []))],
             "metric_rows": metric_rows,
             "metric_columns": ["metric", "mean", "std", "min", "max"],
             "fold_rows": fold_rows,
@@ -694,7 +666,6 @@ class ReportService:
                 "average_daily_turnover",
             ],
             "table_rows": table_rows,
-            "interpretation": self._build_benchmark_interpretation(comparison_rows),
             "missing_items": [
                 name
                 for name in (
@@ -779,10 +750,9 @@ class ReportService:
                 robustness_summary.get("whether_model_beats_simple_momentum_on_best_total_return")
             ),
             "robustness_notes": [
-                _translate_report_note(note)
+                str(note)
                 for note in list(robustness_summary.get("robustness_notes", []))
-            ]
-            or ["暂无"],
+            ],
             "top_config_rows": top_config_rows,
             "top_config_columns": [
                 "top_k",

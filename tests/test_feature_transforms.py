@@ -61,3 +61,15 @@ def test_build_daily_features_computes_key_metrics_without_leakage() -> None:
     assert pd.isna(feature_frame.iloc[18]["return_20d"])
     assert pd.isna(feature_frame.iloc[58]["volatility_60d"])
     assert not pd.isna(closes.iloc[1])
+
+
+def test_build_daily_features_replaces_infinite_values_with_nan() -> None:
+    frame = build_sample_daily_frame()
+    frame.loc[1, "volume"] = 0.0
+    frame.loc[2, "volume"] = 10.0
+
+    feature_frame = build_daily_features(frame)
+
+    numeric_frame = feature_frame.select_dtypes(include=["number"])
+    assert not numeric_frame.isin([float("inf"), float("-inf")]).any().any()
+    assert pd.isna(feature_frame["volume_change_1d"]).sum() >= 1

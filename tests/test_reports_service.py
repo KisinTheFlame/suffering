@@ -259,8 +259,9 @@ def test_report_service_generates_markdown_and_summary(tmp_path: Path) -> None:
 
     markdown = report_path.read_text(encoding="utf-8")
     assert "## 基准对比" in markdown
-    assert "建议先回头审视特征与标签设计" in markdown
-    assert "建议先加入简单组合约束与回撤控制" in markdown
+    assert "## 执行摘要" not in markdown
+    assert "下一步研究建议" not in markdown
+    assert "建议先回头审视特征与标签设计" not in markdown
 
 
 def test_report_service_supports_partial_report_when_robustness_missing(tmp_path: Path) -> None:
