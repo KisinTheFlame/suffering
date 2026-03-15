@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
     default_robustness_top_k_values: list[int] = [3, 5, 10]
     default_robustness_holding_days_values: list[int] = [3, 5, 10]
     default_robustness_cost_bps_values: list[float] = [0.0, 5.0, 10.0]
+    backtest_robustness_max_workers: int | None = None
     default_benchmark_symbol: str = "QQQ"
     default_benchmark_momentum_feature: str = "return_20d"
     xgb_n_estimators: int = 100
@@ -145,6 +147,24 @@ class Settings(BaseSettings):
         if not value or any(item < 0 for item in value):
             raise ValueError("robustness cost defaults must be non-negative and non-empty")
         return value
+
+    @field_validator("backtest_robustness_max_workers", mode="before")
+    @classmethod
+    def parse_optional_positive_int(cls, value: object) -> object:
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            return int(value.strip())
+        return value
+
+    @field_validator("backtest_robustness_max_workers")
+    @classmethod
+    def validate_backtest_robustness_max_workers(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        if int(value) < 1:
+            raise ValueError("backtest_robustness_max_workers must be at least 1 when set")
+        return int(value)
 
     @field_validator("xgb_device", "xgb_ranker_device")
     @classmethod

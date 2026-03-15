@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+
 import pandas as pd
 import yfinance as yf
 
@@ -18,15 +21,22 @@ class YFinanceDailyProvider:
         end_date: str | None = None,
     ) -> pd.DataFrame:
         normalized_symbol = normalize_symbol(symbol)
-        frame = yf.download(
-            tickers=normalized_symbol,
-            start=start_date,
-            end=end_date,
-            auto_adjust=False,
-            progress=False,
-            actions=False,
-        )
+        stderr_buffer = io.StringIO()
+        with contextlib.redirect_stderr(stderr_buffer):
+            frame = yf.download(
+                tickers=normalized_symbol,
+                start=start_date,
+                end=end_date,
+                auto_adjust=False,
+                progress=False,
+                actions=False,
+            )
+        stderr_output = stderr_buffer.getvalue().strip()
         if frame.empty:
+            if stderr_output and not _is_expected_empty_download_message(stderr_output):
+                raise ValueError(
+                    f"Failed to fetch daily data for symbol {normalized_symbol}: {stderr_output}"
+                )
             raise ValueError(f"No daily data returned for symbol: {normalized_symbol}")
 
         if isinstance(frame.columns, pd.MultiIndex):
@@ -59,3 +69,14 @@ class YFinanceDailyProvider:
 
         ordered = output.loc[:, DAILY_PRICE_COLUMNS].sort_values(DATE_COLUMN).reset_index(drop=True)
         return ordered
+
+
+def _is_expected_empty_download_message(message: str) -> bool:
+    normalized_message = " ".join(message.lower().split())
+    expected_patterns = (
+        "failed download",
+        "possibly delisted",
+        "no price data found",
+        "data doesn't exist",
+    )
+    return any(pattern in normalized_message for pattern in expected_patterns)

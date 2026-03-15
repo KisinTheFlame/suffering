@@ -175,6 +175,7 @@ class FakeBacktestService:
         top_k_values: list[int] | None = None,
         holding_days_values: list[int] | None = None,
         cost_bps_values: list[float] | None = None,
+        max_workers: int | None = None,
     ) -> dict[str, object]:
         resolved_model_name = model_name or "xgb_ranker"
         if resolved_model_name == "missing_robustness":
@@ -341,6 +342,8 @@ def test_backtest_robustness_command_can_be_called(
             "3,5",
             "--cost-bps-values",
             "0,5",
+            "--max-workers",
+            "2",
         ]
     )
     captured = capsys.readouterr()

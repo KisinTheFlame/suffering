@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import multiprocessing as mp
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +47,27 @@ class ModelStrategyBacktestResult:
     equity_curve: pd.DataFrame
     trades: pd.DataFrame
     skipped_trades: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class RobustnessTaskResult:
+    model_row: dict[str, Any]
+    simple_momentum_row: dict[str, Any]
+    reference_key: tuple[int, float]
+    target_dates: pd.Series
+
+
+@dataclass(frozen=True)
+class RobustnessWorkerState:
+    model_name: str
+    model_task_type: str
+    model_signals: pd.DataFrame
+    price_frames: dict[str, pd.DataFrame]
+    candidate_frame: pd.DataFrame
+    momentum_feature: str
+
+
+_ROBUSTNESS_WORKER_STATE: RobustnessWorkerState | None = None
 
 
 class BacktestService:
@@ -446,6 +470,7 @@ class BacktestService:
         top_k_values: list[int] | None = None,
         holding_days_values: list[int] | None = None,
         cost_bps_values: list[float] | None = None,
+        max_workers: int | None = None,
     ) -> dict[str, Any]:
         resolved_model_name = self._resolve_backtest_model_name(model_name)
         resolved_top_k_values = top_k_values or list(self.settings.default_robustness_top_k_values)
@@ -475,55 +500,27 @@ class BacktestService:
             momentum_feature=momentum_feature,
         )
         model_task_type = resolve_model_task(model_name=resolved_model_name, settings=self.settings)
+        resolved_max_workers = self._resolve_robustness_max_workers(
+            requested_max_workers=max_workers,
+            total_configs=len(parameter_grid),
+        )
 
-        model_rows: list[dict[str, Any]] = []
-        simple_momentum_rows: list[dict[str, Any]] = []
+        task_results = self._run_robustness_tasks(
+            parameter_grid=parameter_grid,
+            model_name=resolved_model_name,
+            model_task_type=model_task_type,
+            model_signals=model_signals,
+            price_frames=price_frames,
+            candidate_frame=candidate_frame,
+            momentum_feature=momentum_feature,
+            max_workers=resolved_max_workers,
+        )
+
+        model_rows = [result.model_row for result in task_results]
+        simple_momentum_rows = [result.simple_momentum_row for result in task_results]
         reference_target_dates: dict[tuple[int, float], pd.Series] = {}
-        for top_k_value, holding_days_value, cost_bps_value in parameter_grid:
-            model_result = self._build_model_strategy_backtest_result(
-                model_name=resolved_model_name,
-                signals=model_signals,
-                price_frames=price_frames,
-                top_k=top_k_value,
-                holding_days=holding_days_value,
-                cost_bps_per_side=cost_bps_value,
-            )
-            model_rows.append(
-                build_robustness_row(
-                    strategy_name="model_strategy",
-                    task_type=model_task_type,
-                    model_name=resolved_model_name,
-                    top_k=top_k_value,
-                    holding_days=holding_days_value,
-                    cost_bps_per_side=cost_bps_value,
-                    summary=model_result.summary,
-                )
-            )
-            reference_target_dates.setdefault(
-                (holding_days_value, cost_bps_value),
-                model_result.daily_returns["date"].copy(),
-            )
-
-            momentum_result = build_simple_momentum_top_k_benchmark(
-                target_dates=model_result.daily_returns["date"],
-                candidate_frame=candidate_frame,
-                price_frames=price_frames,
-                top_k=top_k_value,
-                holding_days=holding_days_value,
-                cost_bps_per_side=cost_bps_value,
-                momentum_feature=momentum_feature,
-            )
-            simple_momentum_rows.append(
-                build_robustness_row(
-                    strategy_name=momentum_result.strategy_name,
-                    task_type=momentum_result.task_type,
-                    model_name=None,
-                    top_k=top_k_value,
-                    holding_days=holding_days_value,
-                    cost_bps_per_side=cost_bps_value,
-                    summary=momentum_result.summary,
-                )
-            )
+        for result in task_results:
+            reference_target_dates.setdefault(result.reference_key, result.target_dates.copy())
 
         qqq_symbol = self.settings.default_benchmark_symbol
         qqq_price_frame = self._load_price_frames([qqq_symbol])[qqq_symbol]
@@ -721,73 +718,82 @@ class BacktestService:
         holding_days: int,
         cost_bps_per_side: float,
     ) -> ModelStrategyBacktestResult:
-        cohorts = build_top_k_cohorts(
-            signals=signals,
-            top_k=top_k,
-            holding_days=holding_days,
-        )
-        portfolio_result = simulate_overlapping_portfolio(
-            cohorts=cohorts,
-            price_frames=price_frames,
-            holding_days=holding_days,
-            cost_bps_per_side=cost_bps_per_side,
-        )
-        summary = self._build_model_backtest_summary(
+        return _build_model_strategy_backtest_result(
             model_name=model_name,
             signals=signals,
-            cohorts=cohorts,
-            portfolio_result=portfolio_result,
+            price_frames=price_frames,
             top_k=top_k,
             holding_days=holding_days,
             cost_bps_per_side=cost_bps_per_side,
         )
-        return ModelStrategyBacktestResult(
-            summary=summary,
-            daily_returns=portfolio_result.daily_returns,
-            equity_curve=portfolio_result.equity_curve,
-            trades=portfolio_result.trades,
-            skipped_trades=portfolio_result.skipped_trades,
-        )
 
-    def _build_model_backtest_summary(
+    def _run_robustness_tasks(
         self,
         *,
+        parameter_grid: list[tuple[int, int, float]],
         model_name: str,
-        signals: pd.DataFrame,
-        cohorts: pd.DataFrame,
-        portfolio_result: PortfolioBacktestResult,
-        top_k: int,
-        holding_days: int,
-        cost_bps_per_side: float,
-    ) -> dict[str, Any]:
-        metrics = compute_backtest_metrics(
-            daily_returns=portfolio_result.daily_returns,
-            trades=portfolio_result.trades,
+        model_task_type: str,
+        model_signals: pd.DataFrame,
+        price_frames: dict[str, pd.DataFrame],
+        candidate_frame: pd.DataFrame,
+        momentum_feature: str,
+        max_workers: int,
+    ) -> list[RobustnessTaskResult]:
+        if max_workers <= 1:
+            return [
+                _run_robustness_task_with_state(
+                    parameters=parameters,
+                    state=RobustnessWorkerState(
+                        model_name=model_name,
+                        model_task_type=model_task_type,
+                        model_signals=model_signals,
+                        price_frames=price_frames,
+                        candidate_frame=candidate_frame,
+                        momentum_feature=momentum_feature,
+                    ),
+                )
+                for parameters in parameter_grid
+            ]
+
+        state = RobustnessWorkerState(
+            model_name=model_name,
+            model_task_type=model_task_type,
+            model_signals=model_signals,
+            price_frames=price_frames,
+            candidate_frame=candidate_frame,
+            momentum_feature=momentum_feature,
         )
-        return {
-            "model_name": model_name,
-            "top_k": int(top_k),
-            "holding_days": int(holding_days),
-            "cost_bps_per_side": float(cost_bps_per_side),
-            "round_trip_cost_bps": float(cost_bps_per_side) * 2.0,
-            "signal_date_start": _format_date(signals["date"].min()),
-            "signal_date_end": _format_date(signals["date"].max()),
-            "signal_row_count": int(len(signals)),
-            "selected_row_count": int(len(cohorts)),
-            "cohort_count": int(cohorts["signal_date"].nunique()),
-            "executed_cohort_count": int(portfolio_result.trades["signal_date"].nunique()),
-            "trade_count": int(len(portfolio_result.trades)),
-            "skipped_trade_count": int(len(portfolio_result.skipped_trades)),
-            "average_selected_future_return_5d": _safe_float(
-                portfolio_result.trades[FUTURE_RETURN_5D_COLUMN].mean()
-            ),
-            "average_cohort_future_return_5d": _safe_float(
-                portfolio_result.trades.groupby("signal_date")[FUTURE_RETURN_5D_COLUMN]
-                .mean()
-                .mean()
-            ),
-            **metrics,
-        }
+        executor_kwargs: dict[str, Any] = {"max_workers": max_workers}
+        mp_context = _resolve_process_pool_context()
+        if mp_context is not None:
+            executor_kwargs["mp_context"] = mp_context
+
+        with ProcessPoolExecutor(
+            initializer=_initialize_robustness_worker,
+            initargs=(state,),
+            **executor_kwargs,
+        ) as executor:
+            return list(executor.map(_run_robustness_task, parameter_grid))
+
+    def _resolve_robustness_max_workers(
+        self,
+        *,
+        requested_max_workers: int | None,
+        total_configs: int,
+    ) -> int:
+        if total_configs <= 1:
+            return 1
+
+        configured_max_workers = (
+            requested_max_workers
+            if requested_max_workers is not None
+            else self.settings.backtest_robustness_max_workers
+        )
+        if configured_max_workers is None:
+            cpu_count = os.cpu_count() or 1
+            configured_max_workers = max(1, cpu_count - 1)
+
+        return max(1, min(int(configured_max_workers), total_configs))
 
     def _resolve_backtest_model_name(self, model_name: str | None) -> str:
         resolved_model_name = model_name or self.settings.default_backtest_model
@@ -820,6 +826,147 @@ class BacktestService:
 
 def build_backtest_service(settings: Settings | None = None) -> BacktestService:
     return BacktestService.from_settings(settings=settings)
+
+
+def _build_model_strategy_backtest_result(
+    *,
+    model_name: str,
+    signals: pd.DataFrame,
+    price_frames: dict[str, pd.DataFrame],
+    top_k: int,
+    holding_days: int,
+    cost_bps_per_side: float,
+) -> ModelStrategyBacktestResult:
+    cohorts = build_top_k_cohorts(
+        signals=signals,
+        top_k=top_k,
+        holding_days=holding_days,
+    )
+    portfolio_result = simulate_overlapping_portfolio(
+        cohorts=cohorts,
+        price_frames=price_frames,
+        holding_days=holding_days,
+        cost_bps_per_side=cost_bps_per_side,
+    )
+    summary = _build_model_backtest_summary(
+        model_name=model_name,
+        signals=signals,
+        cohorts=cohorts,
+        portfolio_result=portfolio_result,
+        top_k=top_k,
+        holding_days=holding_days,
+        cost_bps_per_side=cost_bps_per_side,
+    )
+    return ModelStrategyBacktestResult(
+        summary=summary,
+        daily_returns=portfolio_result.daily_returns,
+        equity_curve=portfolio_result.equity_curve,
+        trades=portfolio_result.trades,
+        skipped_trades=portfolio_result.skipped_trades,
+    )
+
+
+def _build_model_backtest_summary(
+    *,
+    model_name: str,
+    signals: pd.DataFrame,
+    cohorts: pd.DataFrame,
+    portfolio_result: PortfolioBacktestResult,
+    top_k: int,
+    holding_days: int,
+    cost_bps_per_side: float,
+) -> dict[str, Any]:
+    metrics = compute_backtest_metrics(
+        daily_returns=portfolio_result.daily_returns,
+        trades=portfolio_result.trades,
+    )
+    return {
+        "model_name": model_name,
+        "top_k": int(top_k),
+        "holding_days": int(holding_days),
+        "cost_bps_per_side": float(cost_bps_per_side),
+        "round_trip_cost_bps": float(cost_bps_per_side) * 2.0,
+        "signal_date_start": _format_date(signals["date"].min()),
+        "signal_date_end": _format_date(signals["date"].max()),
+        "signal_row_count": int(len(signals)),
+        "selected_row_count": int(len(cohorts)),
+        "cohort_count": int(cohorts["signal_date"].nunique()),
+        "executed_cohort_count": int(portfolio_result.trades["signal_date"].nunique()),
+        "trade_count": int(len(portfolio_result.trades)),
+        "skipped_trade_count": int(len(portfolio_result.skipped_trades)),
+        "average_selected_future_return_5d": _safe_float(
+            portfolio_result.trades[FUTURE_RETURN_5D_COLUMN].mean()
+        ),
+        "average_cohort_future_return_5d": _safe_float(
+            portfolio_result.trades.groupby("signal_date")[FUTURE_RETURN_5D_COLUMN].mean().mean()
+        ),
+        **metrics,
+    }
+
+
+def _initialize_robustness_worker(state: RobustnessWorkerState) -> None:
+    global _ROBUSTNESS_WORKER_STATE
+    _ROBUSTNESS_WORKER_STATE = state
+
+
+def _run_robustness_task(parameters: tuple[int, int, float]) -> RobustnessTaskResult:
+    if _ROBUSTNESS_WORKER_STATE is None:
+        raise RuntimeError("robustness worker state was not initialized")
+    return _run_robustness_task_with_state(parameters=parameters, state=_ROBUSTNESS_WORKER_STATE)
+
+
+def _run_robustness_task_with_state(
+    *,
+    parameters: tuple[int, int, float],
+    state: RobustnessWorkerState,
+) -> RobustnessTaskResult:
+    top_k_value, holding_days_value, cost_bps_value = parameters
+    model_result = _build_model_strategy_backtest_result(
+        model_name=state.model_name,
+        signals=state.model_signals,
+        price_frames=state.price_frames,
+        top_k=top_k_value,
+        holding_days=holding_days_value,
+        cost_bps_per_side=cost_bps_value,
+    )
+    momentum_result = build_simple_momentum_top_k_benchmark(
+        target_dates=model_result.daily_returns["date"],
+        candidate_frame=state.candidate_frame,
+        price_frames=state.price_frames,
+        top_k=top_k_value,
+        holding_days=holding_days_value,
+        cost_bps_per_side=cost_bps_value,
+        momentum_feature=state.momentum_feature,
+    )
+    return RobustnessTaskResult(
+        model_row=build_robustness_row(
+            strategy_name="model_strategy",
+            task_type=state.model_task_type,
+            model_name=state.model_name,
+            top_k=top_k_value,
+            holding_days=holding_days_value,
+            cost_bps_per_side=cost_bps_value,
+            summary=model_result.summary,
+        ),
+        simple_momentum_row=build_robustness_row(
+            strategy_name=momentum_result.strategy_name,
+            task_type=momentum_result.task_type,
+            model_name=None,
+            top_k=top_k_value,
+            holding_days=holding_days_value,
+            cost_bps_per_side=cost_bps_value,
+            summary=momentum_result.summary,
+        ),
+        reference_key=(holding_days_value, float(cost_bps_value)),
+        target_dates=model_result.daily_returns["date"].copy(),
+    )
+
+
+def _resolve_process_pool_context() -> mp.context.BaseContext | None:
+    available_methods = set(mp.get_all_start_methods())
+    if "fork" in available_methods:
+        return mp.get_context("fork")
+    return None
 
 
 def _format_date(value: pd.Timestamp | Any) -> str | None:

@@ -87,3 +87,41 @@ def test_update_daily_data_appends_new_rows_after_cached_tail(tmp_path: Path) ->
         "2024-01-04",
         "2024-01-05",
     ]
+
+
+def test_fetch_daily_data_clips_future_end_date_to_latest_expected_market_date(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider({("2024-01-02", "2024-01-05"): build_frame(["2024-01-02"])})
+    service = DailyDataService(
+        storage=DailyDataStorage(data_dir=tmp_path),
+        provider=provider,
+        settings=Settings(data_dir=tmp_path, default_start_date="2024-01-02"),
+    )
+    service._latest_expected_market_date = lambda: pd.Timestamp("2024-01-05")  # type: ignore[method-assign]
+
+    result = service.fetch_daily_data("AAPL", start_date="2024-01-02", end_date="2025-12-31")
+
+    assert provider.calls == [("2024-01-02", "2024-01-05")]
+    assert len(result) == 1
+
+
+def test_update_daily_data_does_not_fetch_future_tail_beyond_latest_expected_market_date(
+    tmp_path: Path,
+) -> None:
+    storage = DailyDataStorage(data_dir=tmp_path)
+    cached_frame = build_frame(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"])
+    storage.write_daily_data("AAPL", cached_frame)
+    provider = RecordingProvider({})
+    service = DailyDataService(
+        storage=storage,
+        provider=provider,
+        settings=Settings(data_dir=tmp_path, default_start_date="2024-01-02"),
+    )
+    service._latest_expected_market_date = lambda: pd.Timestamp("2024-01-05")  # type: ignore[method-assign]
+
+    result = service.update_daily_data("AAPL", end_date="2025-12-31")
+
+    assert provider.calls == []
+    assert result.action == "cache_hit"
+    assert result.cached_rows == 4

@@ -55,7 +55,9 @@ class DailyDataService:
         end_date: str | None = None,
     ) -> pd.DataFrame:
         resolved_start_date = start_date or self.settings.default_start_date
-        resolved_end_date = end_date or self.settings.default_end_date
+        resolved_end_date = self._normalize_fetch_end_date(
+            end_date or self.settings.default_end_date
+        )
         frame = self.provider.fetch_daily_data(
             symbol=symbol,
             start_date=resolved_start_date,
@@ -92,7 +94,11 @@ class DailyDataService:
         fetched_rows = 0
 
         resolved_start_ts = pd.Timestamp(resolved_start_date).normalize()
-        resolved_end_ts = pd.Timestamp(resolved_end_date).normalize() if resolved_end_date else None
+        resolved_end_ts = (
+            pd.Timestamp(self._normalize_fetch_end_date(resolved_end_date)).normalize()
+            if self._normalize_fetch_end_date(resolved_end_date)
+            else None
+        )
         cached_start_ts = pd.to_datetime(cached_frame[DATE_COLUMN]).min().normalize()
         cached_end_ts = pd.to_datetime(cached_frame[DATE_COLUMN]).max().normalize()
 
@@ -115,7 +121,7 @@ class DailyDataService:
             fetch_ranges.append(
                 (
                     (cached_end_ts + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
-                    resolved_end_date,
+                    self._normalize_fetch_end_date(resolved_end_date),
                 )
             )
 
@@ -233,6 +239,15 @@ class DailyDataService:
 
     def _latest_expected_market_date(self) -> pd.Timestamp:
         return (pd.Timestamp.today().normalize() - BDay(1)).normalize()
+
+    def _normalize_fetch_end_date(self, end_date: str | None) -> str | None:
+        if end_date is None:
+            return None
+        requested_end_ts = pd.Timestamp(end_date).normalize()
+        latest_expected_ts = self._latest_expected_market_date()
+        if requested_end_ts > latest_expected_ts:
+            return latest_expected_ts.strftime("%Y-%m-%d")
+        return requested_end_ts.strftime("%Y-%m-%d")
 
 
 def build_data_service(settings: Settings | None = None) -> DailyDataService:

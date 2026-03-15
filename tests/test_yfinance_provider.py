@@ -1,4 +1,7 @@
+import sys
+
 import pandas as pd
+import pytest
 
 from suffering.data.providers.yfinance_provider import YFinanceDailyProvider
 
@@ -37,3 +40,28 @@ def test_yfinance_provider_normalizes_output(monkeypatch) -> None:
     ]
     assert frame["symbol"].unique().tolist() == ["AAPL"]
     assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-02", "2024-01-03"]
+
+
+def test_yfinance_provider_suppresses_expected_empty_download_stderr(
+    monkeypatch,
+    capsys,
+) -> None:
+    def fake_download(**kwargs):
+        print(
+            "1 Failed download: ['AAPL']: "
+            "YFPricesMissingError('possibly delisted; no price data found')",
+            file=sys.stderr,
+        )
+        return pd.DataFrame()
+
+    monkeypatch.setattr(
+        "suffering.data.providers.yfinance_provider.yf.download",
+        fake_download,
+    )
+
+    provider = YFinanceDailyProvider()
+    with pytest.raises(ValueError, match="No daily data returned for symbol: AAPL"):
+        provider.fetch_daily_data("aapl", start_date="2024-01-01", end_date="2024-01-31")
+
+    captured = capsys.readouterr()
+    assert captured.err == ""

@@ -133,6 +133,7 @@ def test_backtest_service_runs_robustness_and_writes_artifacts(tmp_path: Path) -
         top_k_values=[1, 2],
         holding_days_values=[3, 5],
         cost_bps_values=[0, 5],
+        max_workers=2,
     )
 
     assert summary["model_name"] == "xgb_ranker"

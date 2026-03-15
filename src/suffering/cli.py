@@ -337,6 +337,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--cost-bps-values",
         help="Comma-separated single-side transaction costs, for example 0,5,10.",
     )
+    backtest_robustness_parser.add_argument(
+        "--max-workers",
+        type=int,
+        help="Maximum CPU worker processes used for robustness evaluation.",
+    )
 
     backtest_robustness_show_parser = subparsers.add_parser(
         "backtest-robustness-show",
@@ -1093,6 +1098,7 @@ def run_backtest_robustness(
     top_k_values: str | None,
     holding_days_values: str | None,
     cost_bps_values: str | None,
+    max_workers: int | None,
 ) -> int:
     settings = get_settings()
     service = build_backtest_service(settings)
@@ -1116,6 +1122,7 @@ def run_backtest_robustness(
                 settings.default_robustness_cost_bps_values,
                 argument_name="cost_bps_values",
             ),
+            max_workers=max_workers,
         )
     except FileNotFoundError as exc:
         message = str(exc)
@@ -1477,6 +1484,7 @@ def main(argv: list[str] | None = None) -> int:
             top_k_values=args.top_k_values,
             holding_days_values=args.holding_days_values,
             cost_bps_values=args.cost_bps_values,
+            max_workers=args.max_workers,
         )
     if args.command == "backtest-robustness-show":
         return run_backtest_robustness_show(model_name=args.model)
