@@ -16,6 +16,7 @@ class BacktestStorage:
         self.artifacts_dir = artifacts_dir
         self.backtests_dir = self.artifacts_dir / "backtests"
         self.comparisons_dir = self.backtests_dir / "comparisons"
+        self.robustness_dir = self.backtests_dir / "robustness"
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "BacktestStorage":
@@ -350,6 +351,32 @@ class BacktestStorage:
             ),
             frame,
         )
+
+    def robustness_summary_path(self, model_name: str) -> Path:
+        return self.robustness_dir / f"{model_name}_robustness_summary.json"
+
+    def robustness_table_path(self, model_name: str) -> Path:
+        return self.robustness_dir / f"{model_name}_robustness_table.csv"
+
+    def write_robustness_summary(self, model_name: str, summary: dict[str, Any]) -> Path:
+        path = self.robustness_summary_path(model_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(summary, file, ensure_ascii=False, indent=2)
+        return path
+
+    def read_robustness_summary(self, model_name: str) -> dict[str, Any]:
+        path = self.robustness_summary_path(model_name)
+        if not path.exists():
+            raise FileNotFoundError(f"Backtest robustness summary not found for {model_name}")
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(file)
+
+    def write_robustness_table(self, model_name: str, frame: pd.DataFrame) -> Path:
+        return self._write_frame(self.robustness_table_path(model_name), frame)
+
+    def read_robustness_table(self, model_name: str) -> pd.DataFrame:
+        return self._read_frame(self.robustness_table_path(model_name))
 
     def _write_frame(self, path: Path, frame: pd.DataFrame) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)

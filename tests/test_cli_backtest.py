@@ -169,6 +169,95 @@ class FakeBacktestService:
             ],
         }
 
+    def run_backtest_robustness(
+        self,
+        model_name: str | None = None,
+        top_k_values: list[int] | None = None,
+        holding_days_values: list[int] | None = None,
+        cost_bps_values: list[float] | None = None,
+    ) -> dict[str, object]:
+        resolved_model_name = model_name or "xgb_ranker"
+        if resolved_model_name == "missing_robustness":
+            raise FileNotFoundError("Walk-forward test predictions not found")
+
+        summary_path = self.root_dir / "robustness_summary.json"
+        table_path = self.root_dir / "robustness_table.csv"
+        summary_path.touch()
+        table_path.touch()
+        return {
+            "model_name": resolved_model_name,
+            "total_configs_evaluated": 8,
+            "row_count": 24,
+            "top_k_values": top_k_values or [3, 5, 10],
+            "holding_days_values": holding_days_values or [3, 5, 10],
+            "cost_bps_values": cost_bps_values or [0.0, 5.0, 10.0],
+            "best_config_by_sharpe_net": {
+                "strategy_name": "model_strategy",
+                "model_name": resolved_model_name,
+                "top_k": 5,
+                "holding_days": 5,
+                "cost_bps_per_side": 5.0,
+                "sharpe_ratio_net": 1.2,
+            },
+            "best_config_by_total_return_net": {
+                "strategy_name": "model_strategy",
+                "model_name": resolved_model_name,
+                "top_k": 10,
+                "holding_days": 3,
+                "cost_bps_per_side": 0.0,
+                "total_return_net": 0.18,
+            },
+            "simple_momentum_best_sharpe_net": {
+                "strategy_name": "simple_momentum_top_k",
+                "top_k": 5,
+                "holding_days": 5,
+                "cost_bps_per_side": 5.0,
+                "sharpe_ratio_net": 0.9,
+            },
+            "simple_momentum_best_total_return_net": {
+                "strategy_name": "simple_momentum_top_k",
+                "top_k": 10,
+                "holding_days": 3,
+                "cost_bps_per_side": 0.0,
+                "total_return_net": 0.12,
+            },
+            "whether_model_beats_simple_momentum_on_best_sharpe": True,
+            "whether_model_beats_simple_momentum_on_best_total_return": True,
+            "robustness_notes": ["model remains competitive across multiple top_k values"],
+            "artifacts": {
+                "summary_path": str(summary_path),
+                "table_path": str(table_path),
+            },
+        }
+
+    def read_backtest_robustness(self, model_name: str | None = None) -> dict[str, object]:
+        resolved_model_name = model_name or "xgb_ranker"
+        if resolved_model_name == "missing_robustness":
+            raise FileNotFoundError
+        report = self.run_backtest_robustness(model_name=resolved_model_name)
+        return {
+            **report,
+            "table_rows": [
+                {
+                    "strategy_name": "model_strategy",
+                    "task_type": "ranking",
+                    "model_name": resolved_model_name,
+                    "top_k": 5,
+                    "holding_days": 5,
+                    "cost_bps_per_side": 5.0,
+                    "total_return_net": 0.15,
+                    "sharpe_ratio_net": 1.2,
+                    "max_drawdown_net": -0.05,
+                    "annualized_return_net": 0.30,
+                    "annualized_volatility": 0.22,
+                    "average_daily_turnover": 0.50,
+                    "average_active_positions": 4.0,
+                    "start_date": "2024-01-03",
+                    "end_date": "2024-01-17",
+                }
+            ],
+        }
+
 
 def test_backtest_walkforward_command_can_be_called(monkeypatch, capsys, tmp_path: Path) -> None:
     monkeypatch.setattr(
@@ -229,3 +318,51 @@ def test_backtest_compare_show_command_reports_missing_summary(
 
     assert exit_code == 1
     assert "backtest comparison not found" in captured.out
+
+
+def test_backtest_robustness_command_can_be_called(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_backtest_service",
+        lambda settings=None: FakeBacktestService(tmp_path / "backtests"),
+    )
+
+    exit_code = main(
+        [
+            "backtest-robustness",
+            "--model",
+            "xgb_ranker",
+            "--top-k-values",
+            "3,5",
+            "--holding-days-values",
+            "3,5",
+            "--cost-bps-values",
+            "0,5",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "model: xgb_ranker" in captured.out
+    assert "total_configs_evaluated: 8" in captured.out
+    assert "robustness_summary_path:" in captured.out
+
+
+def test_backtest_robustness_show_command_reports_missing_summary(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "suffering.cli.build_backtest_service",
+        lambda settings=None: FakeBacktestService(tmp_path / "backtests"),
+    )
+
+    exit_code = main(["backtest-robustness-show", "--model", "missing_robustness"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "backtest robustness report not found" in captured.out

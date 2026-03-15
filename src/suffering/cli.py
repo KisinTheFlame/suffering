@@ -292,6 +292,42 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="Single-side transaction cost in basis points.",
     )
+
+    backtest_robustness_parser = subparsers.add_parser(
+        "backtest-robustness",
+        help="Run a small robustness grid over backtest and benchmark configurations.",
+    )
+    backtest_robustness_parser.add_argument(
+        "--model",
+        help=(
+            "Backtest model name, defaulting to the configured backtest model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    backtest_robustness_parser.add_argument(
+        "--top-k-values",
+        help="Comma-separated top-k values, for example 3,5,10.",
+    )
+    backtest_robustness_parser.add_argument(
+        "--holding-days-values",
+        help="Comma-separated holding-day values, for example 3,5,10.",
+    )
+    backtest_robustness_parser.add_argument(
+        "--cost-bps-values",
+        help="Comma-separated single-side transaction costs, for example 0,5,10.",
+    )
+
+    backtest_robustness_show_parser = subparsers.add_parser(
+        "backtest-robustness-show",
+        help="Show a saved robustness summary and table.",
+    )
+    backtest_robustness_show_parser.add_argument(
+        "--model",
+        help=(
+            "Backtest model name, defaulting to the configured backtest model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
     return parser
 
 
@@ -312,13 +348,26 @@ def run_doctor() -> int:
     print(f"default_top_k: {settings.default_top_k}")
     print(f"default_holding_days: {settings.default_holding_days}")
     print(f"default_cost_bps_per_side: {settings.default_cost_bps_per_side}")
+    print(
+        "default_robustness_top_k_values: "
+        f"{', '.join(str(item) for item in settings.default_robustness_top_k_values)}"
+    )
+    print(
+        "default_robustness_holding_days_values: "
+        f"{', '.join(str(item) for item in settings.default_robustness_holding_days_values)}"
+    )
+    print(
+        "default_robustness_cost_bps_values: "
+        f"{', '.join(str(item) for item in settings.default_robustness_cost_bps_values)}"
+    )
     print(f"default_benchmark_symbol: {settings.default_benchmark_symbol}")
     print(f"default_benchmark_momentum_feature: {settings.default_benchmark_momentum_feature}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
         "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor/xgb_ranker "
         "training, walk-forward validation, minimal walk-forward portfolio backtest, and "
-        "benchmark comparison layers available; formal production backtest is not implemented yet"
+        "benchmark comparison plus robustness analysis layers available; formal production "
+        "backtest is not implemented yet"
     )
     return 0
 
@@ -928,6 +977,169 @@ def run_backtest_compare_show(
     return 0
 
 
+def run_backtest_robustness(
+    model_name: str | None,
+    top_k_values: str | None,
+    holding_days_values: str | None,
+    cost_bps_values: str | None,
+) -> int:
+    settings = get_settings()
+    service = build_backtest_service(settings)
+    resolved_model_name = model_name or settings.default_backtest_model
+
+    try:
+        summary = service.run_backtest_robustness(
+            model_name=resolved_model_name,
+            top_k_values=_parse_int_values_argument(
+                top_k_values,
+                settings.default_robustness_top_k_values,
+                argument_name="top_k_values",
+            ),
+            holding_days_values=_parse_int_values_argument(
+                holding_days_values,
+                settings.default_robustness_holding_days_values,
+                argument_name="holding_days_values",
+            ),
+            cost_bps_values=_parse_float_values_argument(
+                cost_bps_values,
+                settings.default_robustness_cost_bps_values,
+                argument_name="cost_bps_values",
+            ),
+        )
+    except FileNotFoundError as exc:
+        message = str(exc)
+        if "Walk-forward test predictions not found" in message:
+            print(
+                f"{message}. Run `suffering train-walkforward --model {resolved_model_name}` first."
+            )
+        elif "Feature cache not found" in message:
+            print(f"{message} If needed, run `suffering feature-build` first.")
+        elif "Raw daily cache not found for symbol(s): QQQ" in message:
+            print(
+                f"{message} Robustness analysis does not auto-fetch QQQ. "
+                "Run `suffering data-fetch QQQ "
+                "--start-date 2020-01-01 --end-date 2024-12-31` first."
+            )
+        elif "Raw daily cache not found" in message:
+            print(f"{message} If needed, run `suffering data-fetch` first.")
+        else:
+            print(message)
+        return 1
+    except ValueError as exc:
+        print(f"robustness analysis failed: {exc}")
+        return 1
+
+    print(f"model: {summary['model_name']}")
+    print(f"total_configs_evaluated: {summary['total_configs_evaluated']}")
+    print(f"table_row_count: {summary['row_count']}")
+    print(f"top_k_values: {', '.join(str(item) for item in summary['top_k_values'])}")
+    print(
+        "holding_days_values: "
+        f"{', '.join(str(item) for item in summary['holding_days_values'])}"
+    )
+    print(
+        "cost_bps_values: "
+        f"{', '.join(str(item) for item in summary['cost_bps_values'])}"
+    )
+    print(
+        "best_config_by_sharpe_net: "
+        f"{_format_robustness_config(summary['best_config_by_sharpe_net'], 'sharpe_ratio_net')}"
+    )
+    print(
+        "best_config_by_total_return_net: "
+        f"{_format_robustness_config(  # noqa: E501
+            summary['best_config_by_total_return_net'],
+            'total_return_net',
+        )}"
+    )
+    print(
+        "simple_momentum_best_sharpe_net: "
+        f"{_format_robustness_config(  # noqa: E501
+            summary['simple_momentum_best_sharpe_net'],
+            'sharpe_ratio_net',
+        )}"
+    )
+    print(
+        "simple_momentum_best_total_return_net: "
+        f"{_format_robustness_config(  # noqa: E501
+            summary['simple_momentum_best_total_return_net'],
+            'total_return_net',
+        )}"
+    )
+    print(
+        "whether_model_beats_simple_momentum_on_best_sharpe: "
+        f"{summary['whether_model_beats_simple_momentum_on_best_sharpe']}"
+    )
+    print(
+        "whether_model_beats_simple_momentum_on_best_total_return: "
+        f"{summary['whether_model_beats_simple_momentum_on_best_total_return']}"
+    )
+    for note in summary["robustness_notes"]:
+        print(f"robustness_note: {note}")
+    print(f"robustness_summary_path: {summary['artifacts']['summary_path']}")
+    print(f"robustness_table_path: {summary['artifacts']['table_path']}")
+    return 0
+
+
+def run_backtest_robustness_show(model_name: str | None) -> int:
+    settings = get_settings()
+    service = build_backtest_service(settings)
+    resolved_model_name = model_name or settings.default_backtest_model
+
+    try:
+        report = service.read_backtest_robustness(model_name=resolved_model_name)
+    except FileNotFoundError:
+        print(
+            f"backtest robustness report not found for model={resolved_model_name}. "
+            "Run `suffering backtest-robustness` first."
+        )
+        return 1
+    except ValueError as exc:
+        print(f"backtest robustness show failed: {exc}")
+        return 1
+
+    print(f"model: {report['model_name']}")
+    print(f"total_configs_evaluated: {report['total_configs_evaluated']}")
+    print(f"table_row_count: {report['row_count']}")
+    print(
+        "best_config_by_sharpe_net: "
+        f"{_format_robustness_config(report['best_config_by_sharpe_net'], 'sharpe_ratio_net')}"
+    )
+    print(
+        "best_config_by_total_return_net: "
+        f"{_format_robustness_config(  # noqa: E501
+            report['best_config_by_total_return_net'],
+            'total_return_net',
+        )}"
+    )
+    print(
+        "simple_momentum_best_sharpe_net: "
+        f"{_format_robustness_config(  # noqa: E501
+            report['simple_momentum_best_sharpe_net'],
+            'sharpe_ratio_net',
+        )}"
+    )
+    print(
+        "simple_momentum_best_total_return_net: "
+        f"{_format_robustness_config(  # noqa: E501
+            report['simple_momentum_best_total_return_net'],
+            'total_return_net',
+        )}"
+    )
+    for note in report["robustness_notes"]:
+        print(f"robustness_note: {note}")
+
+    table_frame = pd.DataFrame(report["table_rows"])
+    if not table_frame.empty:
+        print("robustness_table_top:")
+        print(table_frame.head(10).to_string(index=False))
+
+    artifact_paths = report["artifacts"]
+    print(f"robustness_summary_exists: {Path(artifact_paths['summary_path']).exists()}")
+    print(f"robustness_table_exists: {Path(artifact_paths['table_path']).exists()}")
+    return 0
+
+
 def _print_metrics(metrics: dict[str, float | None]) -> None:
     for name in METRIC_NAMES:
         print(f"  {name}: {_format_metric(metrics.get(name))}")
@@ -945,6 +1157,57 @@ def _format_metric(value: float | None) -> str:
     if value is None:
         return "n/a"
     return f"{value:.6f}"
+
+
+def _format_robustness_config(
+    row: dict[str, object] | None,
+    metric_name: str,
+) -> str:
+    if not row:
+        return "n/a"
+
+    return (
+        f"strategy={row.get('strategy_name')}, "
+        f"model_name={row.get('model_name') or 'n/a'}, "
+        f"top_k={row.get('top_k')}, "
+        f"holding_days={row.get('holding_days')}, "
+        f"cost_bps_per_side={row.get('cost_bps_per_side')}, "
+        f"{metric_name}={_format_metric(_coerce_optional_float(row.get(metric_name)))}"
+    )
+
+
+def _parse_int_values_argument(
+    raw_value: str | None,
+    default_values: list[int],
+    *,
+    argument_name: str,
+) -> list[int]:
+    if raw_value is None:
+        return list(default_values)
+    parsed_values = [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not parsed_values:
+        raise ValueError(f"{argument_name} must not be empty")
+    return [int(item) for item in parsed_values]
+
+
+def _parse_float_values_argument(
+    raw_value: str | None,
+    default_values: list[float],
+    *,
+    argument_name: str,
+) -> list[float]:
+    if raw_value is None:
+        return list(default_values)
+    parsed_values = [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not parsed_values:
+        raise ValueError(f"{argument_name} must not be empty")
+    return [float(item) for item in parsed_values]
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1007,6 +1270,15 @@ def main(argv: list[str] | None = None) -> int:
             holding_days=args.holding_days,
             cost_bps_per_side=args.cost_bps_per_side,
         )
+    if args.command == "backtest-robustness":
+        return run_backtest_robustness(
+            model_name=args.model,
+            top_k_values=args.top_k_values,
+            holding_days_values=args.holding_days_values,
+            cost_bps_values=args.cost_bps_values,
+        )
+    if args.command == "backtest-robustness-show":
+        return run_backtest_robustness_show(model_name=args.model)
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")

@@ -1,8 +1,8 @@
 # suffering
 
-`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”；第十轮继续在现有最小组合评估层之上补上了“benchmark / baseline strategy 对比”闭环。
+`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”；第十轮继续在现有最小组合评估层之上补上了“benchmark / baseline strategy 对比”闭环；第十一轮则继续在这些已有产物之上接入了“最小可用的稳健性 / sensitivity analysis 层”。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层，以及一个和模型 backtest 同口径的最小 benchmark comparison 层。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层、一个和模型 backtest 同口径的最小 benchmark comparison 层，以及一个围绕 `top_k / holding_days / cost_bps_per_side` 的小网格稳健性分析层。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -554,6 +554,116 @@ uv run suffering backtest-compare-show --model xgb_ranker --top-k 5 --holding-da
 - benchmark 对比增强
 - 更丰富的组合约束与风控
 
+## 第十一轮已支持的最小稳健性 / sensitivity analysis
+
+第十一轮没有继续堆更多模型，而是在现有 `walk-forward predictions -> model backtest -> benchmark comparison` 闭环之上，补上一层刻意克制的参数稳健性检查。原因很直接：如果一个策略只在单个 `top_k / holding_days / cost_bps_per_side` 组合上看起来很好，而一换参数或一加成本就明显失效，那么此时继续堆模型通常不如先确认策略本身有没有研究价值。
+
+这一轮只做一个很小、固定且可读的参数网格：
+
+- `top_k`: `3, 5, 10`
+- `holding_days`: `3, 5, 10`
+- `cost_bps_per_side`: `0, 5, 10`
+
+CLI 允许传入少量自定义值，但默认仍然是上面这组，不会扩展成复杂参数搜索系统，也不会把训练超参数拉进来。
+
+### 当前支持的分析对象
+
+- 模型策略：`hist_gbr`、`xgb_regressor`、`xgb_ranker`
+- 基线策略：`simple_momentum_top_k`
+- 固定参考 benchmark：`qqq_buy_and_hold`、`equal_weight_universe_buy_and_hold`
+
+其中模型策略全部复用同一个模型已有的 walk-forward test predictions，不会偷偷重跑训练；`simple_momentum_top_k` 继续只使用 `t` 及以前的 `return_20d` 特征；固定参考 benchmark 会按相同成本口径和可比日期范围纳入报告。
+
+### robustness 输出内容
+
+会额外落盘：
+
+- `artifacts/backtests/robustness/<model>_robustness_summary.json`
+- `artifacts/backtests/robustness/<model>_robustness_table.csv`
+
+其中 robustness table 至少包含：
+
+- `strategy_name`
+- `task_type`
+- `model_name`
+- `top_k`
+- `holding_days`
+- `cost_bps_per_side`
+- `total_return_net`
+- `sharpe_ratio_net`
+- `max_drawdown_net`
+- `annualized_return_net`
+- `annualized_volatility`
+- `average_daily_turnover`
+- `average_active_positions`
+- `start_date`
+- `end_date`
+
+summary 会额外给出：
+
+- 模型总共评估了多少组参数
+- 模型按净 Sharpe 和净收益的最佳配置
+- `simple_momentum_top_k` 按净 Sharpe 和净收益的最佳配置
+- 模型是否在最佳 Sharpe / 最佳收益口径上赢过 `simple_momentum_top_k`
+- 一组简单透明的 `robustness_notes`
+
+当前 `robustness_notes` 不是统计显著性结论，只是基于小网格做初步规则判断，例如：
+
+- 是否只在很窄的一组参数上表现较好
+- 成本升高后是否明显退化
+- 是否能在多个 `top_k` 上保持竞争力
+
+### 如何运行 robustness analysis
+
+先准备完整的本地缓存与 walk-forward 预测：
+
+```bash
+uv run suffering data-fetch AAPL MSFT GOOGL AMZN META NVDA QQQ --start-date 2020-01-01 --end-date 2024-12-31
+uv run suffering feature-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering label-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering dataset-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering train-walkforward --model xgb_ranker
+uv run suffering backtest-walkforward --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+```
+
+然后运行稳健性分析：
+
+```bash
+uv run suffering backtest-robustness --model xgb_ranker
+uv run suffering backtest-robustness-show --model xgb_ranker
+```
+
+如果你想用一个更小的自定义网格快速试跑：
+
+```bash
+uv run suffering backtest-robustness --model xgb_ranker --top-k-values 3,5 --holding-days-values 3,5 --cost-bps-values 0,5
+```
+
+`backtest-robustness` 会打印模型名、总配置数、最佳净 Sharpe 配置、最佳净收益配置、`simple_momentum_top_k` 最佳表现、模型是否赢过 simple momentum，以及 robustness summary / table 路径。
+
+`backtest-robustness-show` 会读取已保存的 robustness summary / table，打印主要结果，并检查 robustness artifact 是否存在。
+
+### 如何解读 robustness 报告
+
+- 如果模型只在某一个非常窄的参数点上赢，而周边参数普遍明显变差，那么当前信号更可能是脆弱的。
+- 如果 `cost_bps_per_side` 从 `0` 提高到 `10` 后，净收益或净 Sharpe 快速塌陷，说明策略对交易成本很敏感。
+- 如果模型在多组 `top_k`、多组持有期下都能维持和 `simple_momentum_top_k` 接近或更好的表现，那么这比“单点最优”更值得继续研究。
+- `qqq_buy_and_hold` 和 `equal_weight_universe_buy_and_hold` 主要是参考行，用来帮助判断模型是否只是赢过一个很弱的基线，还是相对于更简单的持有型基准也有区分度。
+
+### 为什么这仍然不是最终生产级研究框架
+
+这一层仍然只是“最小但可信”的稳健性检查，而不是正式研究平台，因为它仍然没有：
+
+- 更细的滑点 / 冲击 / 容量成本模型
+- 风控、组合约束、行业中性与风险模型
+- 更正式的统计检验、归因分析和研究报告体系
+
+后续轮次会继续在这套 robustness 层之上增量补：
+
+- 更细的成本模型
+- 风控 / 组合约束
+- 更正式的研究报告
+
 ## 当前仍然不支持
 
 - 复杂正式回测框架
@@ -573,9 +683,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层 + 最小 benchmark comparison 层”。后续可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层 + 最小 benchmark comparison 层 + 最小 robustness analysis 层”。后续可以按下面的方向逐步扩展：
 
-- `backtest`：在现有 comparison 层之上继续增强 benchmark 对比
+- `backtest`：在现有 robustness 层之上继续增强 benchmark 对比与研究总结
 - `backtest`：补上更细的成本模型、组合约束与风控
 
 在这些能力真正落地之前，当前仓库仍然保持小而清晰，避免过早引入复杂抽象。

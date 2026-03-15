@@ -76,3 +76,32 @@ def test_backtest_storage_writes_and_reads_comparison_artifacts(tmp_path: Path) 
     )
     assert storage.read_comparison_summary("xgb_ranker", 5, 5, 5) == comparison_summary
     assert storage.read_comparison_table("xgb_ranker", 5, 5, 5).shape[0] == 2
+
+
+def test_backtest_storage_writes_and_reads_robustness_artifacts(tmp_path: Path) -> None:
+    storage = BacktestStorage(artifacts_dir=tmp_path)
+    robustness_summary = {"model_name": "xgb_ranker", "total_configs_evaluated": 27}
+    robustness_table = pd.DataFrame(
+        {
+            "strategy_name": ["model_strategy", "simple_momentum_top_k"],
+            "task_type": ["ranking", "benchmark"],
+            "model_name": ["xgb_ranker", None],
+            "top_k": [5, 5],
+            "holding_days": [5, 5],
+            "cost_bps_per_side": [5.0, 5.0],
+        }
+    )
+
+    summary_path = storage.write_robustness_summary("xgb_ranker", robustness_summary)
+    table_path = storage.write_robustness_table("xgb_ranker", robustness_table)
+
+    assert (
+        summary_path
+        == tmp_path / "backtests" / "robustness" / "xgb_ranker_robustness_summary.json"
+    )
+    assert (
+        table_path
+        == tmp_path / "backtests" / "robustness" / "xgb_ranker_robustness_table.csv"
+    )
+    assert storage.read_robustness_summary("xgb_ranker") == robustness_summary
+    assert storage.read_robustness_table("xgb_ranker").shape[0] == 2

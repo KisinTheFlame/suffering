@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     default_top_k: int = 5
     default_holding_days: int = 5
     default_cost_bps_per_side: float = 5.0
+    default_robustness_top_k_values: list[int] = [3, 5, 10]
+    default_robustness_holding_days_values: list[int] = [3, 5, 10]
+    default_robustness_cost_bps_values: list[float] = [0.0, 5.0, 10.0]
     default_benchmark_symbol: str = "QQQ"
     default_benchmark_momentum_feature: str = "return_20d"
     xgb_n_estimators: int = 100
@@ -56,6 +59,24 @@ class Settings(BaseSettings):
     def parse_default_symbols(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip().upper() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator(
+        "default_robustness_top_k_values",
+        "default_robustness_holding_days_values",
+        mode="before",
+    )
+    @classmethod
+    def parse_int_list_values(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [int(item.strip()) for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("default_robustness_cost_bps_values", mode="before")
+    @classmethod
+    def parse_float_list_values(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [float(item.strip()) for item in value.split(",") if item.strip()]
         return value
 
     @field_validator(
@@ -88,6 +109,23 @@ class Settings(BaseSettings):
     def validate_positive_defaults(cls, value: int) -> int:
         if value < 1:
             raise ValueError("backtest integer defaults must be at least 1")
+        return value
+
+    @field_validator(
+        "default_robustness_top_k_values",
+        "default_robustness_holding_days_values",
+    )
+    @classmethod
+    def validate_positive_int_list(cls, value: list[int]) -> list[int]:
+        if not value or any(item < 1 for item in value):
+            raise ValueError("robustness integer defaults must be positive and non-empty")
+        return value
+
+    @field_validator("default_robustness_cost_bps_values")
+    @classmethod
+    def validate_non_negative_float_list(cls, value: list[float]) -> list[float]:
+        if not value or any(item < 0 for item in value):
+            raise ValueError("robustness cost defaults must be non-negative and non-empty")
         return value
 
     @field_validator(
