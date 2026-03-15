@@ -1,8 +1,8 @@
 # suffering
 
-`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”；第十轮继续在现有最小组合评估层之上补上了“benchmark / baseline strategy 对比”闭环；第十一轮则继续在这些已有产物之上接入了“最小可用的稳健性 / sensitivity analysis 层”。
+`suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”；第十轮继续在现有最小组合评估层之上补上了“benchmark / baseline strategy 对比”闭环；第十一轮则继续在这些已有产物之上接入了“最小可用的稳健性 / sensitivity analysis 层”；第十二轮在这些 artifact 之上继续补上了“最小可用的 markdown 研究报告生成层”。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层、一个和模型 backtest 同口径的最小 benchmark comparison 层，以及一个围绕 `top_k / holding_days / cost_bps_per_side` 的小网格稳健性分析层。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层、一个和模型 backtest 同口径的最小 benchmark comparison 层、一个围绕 `top_k / holding_days / cost_bps_per_side` 的小网格稳健性分析层，以及一层直接复用这些 artifacts 的 markdown 研究报告输出。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -664,6 +664,103 @@ uv run suffering backtest-robustness --model xgb_ranker --top-k-values 3,5 --hol
 - 风控 / 组合约束
 - 更正式的研究报告
 
+## 第十二轮已支持的最小研究报告生成层
+
+第十二轮没有继续扩展策略或统计检验，而是在现有 `walk-forward summary / folds / predictions`、`backtest summary`、`benchmark comparison`、`robustness summary / table` 这些 artifact 之上，补上一层刻意克制的 markdown 研究报告输出。目标很简单：让你不必重新翻 JSON 和 CSV，就能快速判断“这个模型是否还值得继续研究”。
+
+### 报告依赖哪些 artifacts
+
+报告生成会优先读取已有 artifact，不会偷偷重跑训练或回测：
+
+- `artifacts/reports/<model>_walkforward_summary.json`
+- `artifacts/reports/<model>_walkforward_folds.csv`
+- `artifacts/predictions/<model>_walkforward_test_predictions.csv`
+- `artifacts/backtests/<model>_top5_h5_cost10_summary.json`
+- `artifacts/backtests/comparisons/<model>_top5_h5_cost10_comparison_summary.json`
+- `artifacts/backtests/comparisons/<model>_top5_h5_cost10_comparison_table.csv`
+- `artifacts/backtests/robustness/<model>_robustness_summary.json`
+- `artifacts/backtests/robustness/<model>_robustness_table.csv`
+
+如果其中某些文件缺失，报告仍会尽量生成，但会在 markdown 中明确标注缺失 section 或缺失 artifact。
+
+### 为什么这层输出有助于研究迭代
+
+- 它把 walk-forward、backtest、benchmark、robustness 几层结果收拢到一份可复查的文本里
+- 它让“是否优于 simple momentum / QQQ / equal weight”这类问题更容易统一口径判断
+- 它会用简单透明的规则自动给出 caveats 和 next steps，减少只盯单一指标的误判
+- 它仍然保持最小实现，便于后续继续往成本模型、风控约束和更系统的研究结论输出演进
+
+### 当前报告包含哪些 sections
+
+当前 markdown report 至少会尝试包含：
+
+- Title / Metadata
+- Executive Summary
+- Walk-Forward Validation Summary
+- Backtest Summary
+- Benchmark Comparison
+- Robustness Summary
+- Key Caveats
+- Next Research Steps
+
+其中 `Executive Summary`、`Key Caveats` 和 `Next Research Steps` 只使用已有数值做简单规则判断，不会伪装成复杂归因分析。
+
+### 如何生成和查看报告
+
+先准备本地 raw data、feature、label、dataset、walk-forward、backtest、benchmark comparison 和 robustness artifact：
+
+```bash
+uv run suffering data-fetch AAPL MSFT GOOGL AMZN META NVDA QQQ --start-date 2020-01-01 --end-date 2024-12-31
+uv run suffering feature-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering label-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering dataset-build AAPL MSFT GOOGL AMZN META NVDA
+uv run suffering train-walkforward --model xgb_ranker
+uv run suffering backtest-walkforward --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+uv run suffering backtest-compare --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+uv run suffering backtest-robustness --model xgb_ranker
+```
+
+然后生成并查看研究报告：
+
+```bash
+uv run suffering report-generate --model xgb_ranker --top-k 5 --holding-days 5 --cost-bps-per-side 5
+uv run suffering report-show --model xgb_ranker
+uv run suffering report-show --model xgb_ranker --full
+```
+
+默认会落盘到：
+
+```text
+artifacts/reports/research/<model>_research_report.md
+```
+
+`report-generate` 会打印：
+
+- 模型名和任务类型
+- 成功读取了哪些 artifact
+- 缺失了哪些 artifact
+- 哪些 report sections 已生成、哪些 section 缺失
+- report 文件路径
+
+`report-show` 默认打印前几段，`--full` 会打印完整 markdown。
+
+### 为什么这还不是最终研究平台
+
+这层输出仍然只是“最小但可信”的研究报告，不是正式研究平台，因为它还没有：
+
+- PDF / HTML / docx 导出
+- 复杂图表系统
+- 更细的滑点 / 冲击 / 容量成本模型
+- 风控、行业中性、风险模型和组合约束
+- 正式统计检验和归因分析
+- Web UI、数据库、CI、调度系统
+
+后续轮次会继续在这层上增量补：
+
+- 更细的成本模型
+- 风控 / 组合约束
+- 更系统的研究结论输出
+
 ## 当前仍然不支持
 
 - 复杂正式回测框架
@@ -683,9 +780,9 @@ uv run pytest
 
 ## 后续规划
 
-当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层 + 最小 benchmark comparison 层 + 最小 robustness analysis 层”。后续可以按下面的方向逐步扩展：
+当前仓库已经完成“项目骨架 + 最小数据层 + 最小特征层 + 最小 label / dataset 层 + 双回归模型与单个 ranking 模型训练闭环 + 最小 walk-forward 验证闭环 + 最小组合评估层 + 最小 benchmark comparison 层 + 最小 robustness analysis 层 + 最小 markdown 研究报告层”。后续可以按下面的方向逐步扩展：
 
-- `backtest`：在现有 robustness 层之上继续增强 benchmark 对比与研究总结
+- `reports`：在现有 markdown 报告层之上继续增强研究总结和结论输出
 - `backtest`：补上更细的成本模型、组合约束与风控
 
 在这些能力真正落地之前，当前仓库仍然保持小而清晰，避免过早引入复杂抽象。

@@ -18,6 +18,7 @@ from suffering.features.definitions import FEATURE_COLUMNS
 from suffering.ranking import build_ranking_service
 from suffering.ranking.labels import FUTURE_RETURN_5D_COLUMN
 from suffering.ranking.panel import RELEVANCE_5D_5Q_COLUMN
+from suffering.reports import build_report_service
 from suffering.training import SUPPORTED_MODEL_NAMES, build_training_service
 from suffering.training.evaluate import METRIC_NAMES
 
@@ -328,6 +329,50 @@ def build_parser() -> argparse.ArgumentParser:
             f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
         ),
     )
+
+    report_generate_parser = subparsers.add_parser(
+        "report-generate",
+        help="Generate a minimal markdown research report from saved artifacts.",
+    )
+    report_generate_parser.add_argument(
+        "--model",
+        help=(
+            "Report model name, defaulting to the configured report model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    report_generate_parser.add_argument(
+        "--top-k",
+        type=int,
+        help="Number of names selected per signal date.",
+    )
+    report_generate_parser.add_argument(
+        "--holding-days",
+        type=int,
+        help="Holding window in trading days.",
+    )
+    report_generate_parser.add_argument(
+        "--cost-bps-per-side",
+        type=float,
+        help="Single-side transaction cost in basis points.",
+    )
+
+    report_show_parser = subparsers.add_parser(
+        "report-show",
+        help="Show a saved markdown research report.",
+    )
+    report_show_parser.add_argument(
+        "--model",
+        help=(
+            "Report model name, defaulting to the configured report model. "
+            f"Supported: {', '.join(SUPPORTED_MODEL_NAMES)}."
+        ),
+    )
+    report_show_parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Print the full markdown report instead of only the leading sections.",
+    )
     return parser
 
 
@@ -348,6 +393,10 @@ def run_doctor() -> int:
     print(f"default_top_k: {settings.default_top_k}")
     print(f"default_holding_days: {settings.default_holding_days}")
     print(f"default_cost_bps_per_side: {settings.default_cost_bps_per_side}")
+    print(f"default_report_model: {settings.default_report_model}")
+    print(f"default_report_top_k: {settings.default_report_top_k}")
+    print(f"default_report_holding_days: {settings.default_report_holding_days}")
+    print(f"default_report_cost_bps_per_side: {settings.default_report_cost_bps_per_side}")
     print(
         "default_robustness_top_k_values: "
         f"{', '.join(str(item) for item in settings.default_robustness_top_k_values)}"
@@ -366,8 +415,8 @@ def run_doctor() -> int:
     print(
         "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor/xgb_ranker "
         "training, walk-forward validation, minimal walk-forward portfolio backtest, and "
-        "benchmark comparison plus robustness analysis layers available; formal production "
-        "backtest is not implemented yet"
+        "benchmark comparison plus robustness analysis layers available; minimal markdown "
+        "research reporting is available; formal production backtest is not implemented yet"
     )
     return 0
 
@@ -1033,38 +1082,38 @@ def run_backtest_robustness(
     print(f"total_configs_evaluated: {summary['total_configs_evaluated']}")
     print(f"table_row_count: {summary['row_count']}")
     print(f"top_k_values: {', '.join(str(item) for item in summary['top_k_values'])}")
-    print(
-        "holding_days_values: "
-        f"{', '.join(str(item) for item in summary['holding_days_values'])}"
-    )
-    print(
-        "cost_bps_values: "
-        f"{', '.join(str(item) for item in summary['cost_bps_values'])}"
-    )
+    print(f"holding_days_values: {', '.join(str(item) for item in summary['holding_days_values'])}")
+    print(f"cost_bps_values: {', '.join(str(item) for item in summary['cost_bps_values'])}")
     print(
         "best_config_by_sharpe_net: "
         f"{_format_robustness_config(summary['best_config_by_sharpe_net'], 'sharpe_ratio_net')}"
     )
     print(
         "best_config_by_total_return_net: "
-        f"{_format_robustness_config(  # noqa: E501
-            summary['best_config_by_total_return_net'],
-            'total_return_net',
-        )}"
+        f"{
+            _format_robustness_config(  # noqa: E501
+                summary['best_config_by_total_return_net'],
+                'total_return_net',
+            )
+        }"
     )
     print(
         "simple_momentum_best_sharpe_net: "
-        f"{_format_robustness_config(  # noqa: E501
-            summary['simple_momentum_best_sharpe_net'],
-            'sharpe_ratio_net',
-        )}"
+        f"{
+            _format_robustness_config(  # noqa: E501
+                summary['simple_momentum_best_sharpe_net'],
+                'sharpe_ratio_net',
+            )
+        }"
     )
     print(
         "simple_momentum_best_total_return_net: "
-        f"{_format_robustness_config(  # noqa: E501
-            summary['simple_momentum_best_total_return_net'],
-            'total_return_net',
-        )}"
+        f"{
+            _format_robustness_config(  # noqa: E501
+                summary['simple_momentum_best_total_return_net'],
+                'total_return_net',
+            )
+        }"
     )
     print(
         "whether_model_beats_simple_momentum_on_best_sharpe: "
@@ -1107,24 +1156,30 @@ def run_backtest_robustness_show(model_name: str | None) -> int:
     )
     print(
         "best_config_by_total_return_net: "
-        f"{_format_robustness_config(  # noqa: E501
-            report['best_config_by_total_return_net'],
-            'total_return_net',
-        )}"
+        f"{
+            _format_robustness_config(  # noqa: E501
+                report['best_config_by_total_return_net'],
+                'total_return_net',
+            )
+        }"
     )
     print(
         "simple_momentum_best_sharpe_net: "
-        f"{_format_robustness_config(  # noqa: E501
-            report['simple_momentum_best_sharpe_net'],
-            'sharpe_ratio_net',
-        )}"
+        f"{
+            _format_robustness_config(  # noqa: E501
+                report['simple_momentum_best_sharpe_net'],
+                'sharpe_ratio_net',
+            )
+        }"
     )
     print(
         "simple_momentum_best_total_return_net: "
-        f"{_format_robustness_config(  # noqa: E501
-            report['simple_momentum_best_total_return_net'],
-            'total_return_net',
-        )}"
+        f"{
+            _format_robustness_config(  # noqa: E501
+                report['simple_momentum_best_total_return_net'],
+                'total_return_net',
+            )
+        }"
     )
     for note in report["robustness_notes"]:
         print(f"robustness_note: {note}")
@@ -1137,6 +1192,76 @@ def run_backtest_robustness_show(model_name: str | None) -> int:
     artifact_paths = report["artifacts"]
     print(f"robustness_summary_exists: {Path(artifact_paths['summary_path']).exists()}")
     print(f"robustness_table_exists: {Path(artifact_paths['table_path']).exists()}")
+    return 0
+
+
+def run_report_generate(
+    model_name: str | None,
+    top_k: int | None,
+    holding_days: int | None,
+    cost_bps_per_side: float | None,
+) -> int:
+    settings = get_settings()
+    service = build_report_service(settings)
+    resolved_model_name = model_name or settings.default_report_model
+
+    try:
+        summary = service.generate_research_report(
+            model_name=resolved_model_name,
+            top_k=top_k,
+            holding_days=holding_days,
+            cost_bps_per_side=cost_bps_per_side,
+        )
+    except FileNotFoundError as exc:
+        print(
+            f"{exc} Generate the relevant upstream artifacts first, for example "
+            "`train-walkforward`, `backtest-walkforward`, `backtest-compare`, "
+            "or `backtest-robustness`."
+        )
+        return 1
+    except ValueError as exc:
+        print(f"research report generation failed: {exc}")
+        return 1
+
+    print(f"model: {summary['model_name']}")
+    print(f"task_type: {summary['task_type']}")
+    print(
+        "available_artifacts: "
+        f"{', '.join(item['name'] for item in summary['available_artifacts']) or 'none'}"
+    )
+    print(
+        "missing_artifacts: "
+        f"{', '.join(item['name'] for item in summary['missing_artifacts']) or 'none'}"
+    )
+    print(f"available_sections: {', '.join(summary['available_sections']) or 'none'}")
+    print(f"missing_sections: {', '.join(summary['missing_sections']) or 'none'}")
+    print(f"report_path: {summary['report_path']}")
+    return 0
+
+
+def run_report_show(model_name: str | None, show_full: bool) -> int:
+    settings = get_settings()
+    service = build_report_service(settings)
+    resolved_model_name = model_name or settings.default_report_model
+
+    try:
+        report = service.read_research_report(model_name=resolved_model_name)
+    except FileNotFoundError:
+        print(
+            f"research report not found for model={resolved_model_name}. "
+            "Run `suffering report-generate` first."
+        )
+        return 1
+    except ValueError as exc:
+        print(f"research report show failed: {exc}")
+        return 1
+
+    print(f"model: {report['model_name']}")
+    print(f"report_path: {report['report_path']}")
+    print("content:")
+    print(_truncate_report_content(report["content"], show_full=show_full))
+    if not show_full:
+        print("... use `suffering report-show --full` to print the complete markdown report.")
     return 0
 
 
@@ -1210,6 +1335,15 @@ def _coerce_optional_float(value: object) -> float | None:
     return float(value)
 
 
+def _truncate_report_content(content: str, *, show_full: bool, max_lines: int = 80) -> str:
+    if show_full:
+        return content
+    lines = content.splitlines()
+    if len(lines) <= max_lines:
+        return content
+    return "\n".join(lines[:max_lines])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1279,6 +1413,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "backtest-robustness-show":
         return run_backtest_robustness_show(model_name=args.model)
+    if args.command == "report-generate":
+        return run_report_generate(
+            model_name=args.model,
+            top_k=args.top_k,
+            holding_days=args.holding_days,
+            cost_bps_per_side=args.cost_bps_per_side,
+        )
+    if args.command == "report-show":
+        return run_report_show(model_name=args.model, show_full=args.full)
 
     print("Welcome to suffering.")
     print("This is the initial quant research project skeleton.")

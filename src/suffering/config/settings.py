@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     default_top_k: int = 5
     default_holding_days: int = 5
     default_cost_bps_per_side: float = 5.0
+    default_report_model: str = "xgb_ranker"
+    default_report_top_k: int = 5
+    default_report_holding_days: int = 5
+    default_report_cost_bps_per_side: float = 5.0
     default_robustness_top_k_values: list[int] = [3, 5, 10]
     default_robustness_holding_days_values: list[int] = [3, 5, 10]
     default_robustness_cost_bps_values: list[float] = [0.0, 5.0, 10.0]
@@ -104,11 +108,23 @@ class Settings(BaseSettings):
             raise ValueError("walkforward_min_folds must be at least 1")
         return value
 
-    @field_validator("default_top_k", "default_holding_days")
+    @field_validator(
+        "default_top_k",
+        "default_holding_days",
+        "default_report_top_k",
+        "default_report_holding_days",
+    )
     @classmethod
     def validate_positive_defaults(cls, value: int) -> int:
         if value < 1:
             raise ValueError("backtest integer defaults must be at least 1")
+        return value
+
+    @field_validator("default_cost_bps_per_side", "default_report_cost_bps_per_side")
+    @classmethod
+    def validate_non_negative_cost_defaults(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("cost defaults must be non-negative")
         return value
 
     @field_validator(
