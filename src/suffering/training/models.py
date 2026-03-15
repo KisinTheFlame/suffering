@@ -63,6 +63,7 @@ def build_regressor(
         learning_rate=resolved_settings.xgb_learning_rate,
         subsample=resolved_settings.xgb_subsample,
         colsample_bytree=resolved_settings.xgb_colsample_bytree,
+        device=resolved_settings.xgb_device,
         random_state=resolved_random_state,
         tree_method="hist",
         objective="reg:squarederror",
@@ -89,6 +90,7 @@ def build_ranker(
         learning_rate=resolved_settings.xgb_ranker_learning_rate,
         subsample=resolved_settings.xgb_ranker_subsample,
         colsample_bytree=resolved_settings.xgb_ranker_colsample_bytree,
+        device=resolved_settings.xgb_ranker_device,
         random_state=resolved_random_state,
         tree_method="hist",
     )

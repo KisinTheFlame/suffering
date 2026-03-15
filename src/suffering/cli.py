@@ -411,6 +411,8 @@ def run_doctor() -> int:
     )
     print(f"default_benchmark_symbol: {settings.default_benchmark_symbol}")
     print(f"default_benchmark_momentum_feature: {settings.default_benchmark_momentum_feature}")
+    print(f"xgb_device: {settings.xgb_device}")
+    print(f"xgb_ranker_device: {settings.xgb_ranker_device}")
     print(f".env detected: {'yes' if env_exists else 'no'}")
     print(
         "status: minimal data, feature, label, dataset, hist_gbr/xgb_regressor/xgb_ranker "

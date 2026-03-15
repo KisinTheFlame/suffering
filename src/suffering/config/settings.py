@@ -45,11 +45,13 @@ class Settings(BaseSettings):
     xgb_learning_rate: float = 0.05
     xgb_subsample: float = 0.8
     xgb_colsample_bytree: float = 0.8
+    xgb_device: str = "cpu"
     xgb_ranker_n_estimators: int = 100
     xgb_ranker_max_depth: int = 4
     xgb_ranker_learning_rate: float = 0.05
     xgb_ranker_subsample: float = 0.8
     xgb_ranker_colsample_bytree: float = 0.8
+    xgb_ranker_device: str = "cpu"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -143,6 +145,16 @@ class Settings(BaseSettings):
         if not value or any(item < 0 for item in value):
             raise ValueError("robustness cost defaults must be non-negative and non-empty")
         return value
+
+    @field_validator("xgb_device", "xgb_ranker_device")
+    @classmethod
+    def validate_xgb_device(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("xgboost device setting must not be empty")
+        if normalized != "cpu" and not normalized.startswith("cuda"):
+            raise ValueError("xgboost device must be `cpu` or start with `cuda`")
+        return normalized
 
     @field_validator(
         "xgb_n_estimators",

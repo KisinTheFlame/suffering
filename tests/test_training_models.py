@@ -25,9 +25,18 @@ def test_build_regressor_and_ranker_support_supported_models() -> None:
     assert isinstance(rank_model, XGBRanker)
     assert hist_model.random_state == 11
     assert xgb_model.get_params()["n_estimators"] == 12
+    assert xgb_model.get_params()["device"] == "cpu"
     assert xgb_model.get_params()["tree_method"] == "hist"
     assert rank_model.get_params()["n_estimators"] == 9
+    assert rank_model.get_params()["device"] == "cpu"
     assert rank_model.get_params()["objective"] == "rank:ndcg"
+
+
+def test_settings_support_cuda_device_overrides() -> None:
+    settings = Settings(xgb_device="cuda", xgb_ranker_device="cuda:0")
+
+    assert settings.xgb_device == "cuda"
+    assert settings.xgb_ranker_device == "cuda:0"
 
 
 def test_resolve_model_name_uses_configured_default() -> None:

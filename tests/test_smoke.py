@@ -14,6 +14,7 @@ def test_settings_can_be_created() -> None:
     assert settings.data_dir
     assert get_settings().artifacts_dir
     assert settings.default_data_provider == "yfinance"
+    assert settings.xgb_device == "cpu"
 
 
 def test_cli_main_can_be_called(capsys) -> None:
