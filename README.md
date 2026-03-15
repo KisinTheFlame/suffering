@@ -2,7 +2,7 @@
 
 `suffering` 是一个面向后续持续迭代的 Python 量化研究项目骨架。前几轮都刻意控制范围：先把项目结构、依赖管理、配置读取、命令行入口和测试底座整理好，再补上“最小可用的数据层”和“最小可用的特征工程层”。第四轮在现有 raw data cache + feature cache 之上补上了“最小可用的 label 生成 + panel dataset 组装层”；第五轮继续沿着同样思路推进，在现有 `panel_5d` dataset 之上接入“单次时间顺序切分 + baseline 训练 + 基础评估”的最小闭环；第六轮在这个 baseline 闭环之上补上了“最小可用的 walk-forward / rolling 时间验证”；第七轮引入了第二个回归模型 `xgb_regressor`；第八轮则在同一套 dataset / split / walk-forward / artifact / CLI 框架之上，最小增量接入了 ranking 模型 `xgb_ranker`；第九轮开始在已有 walk-forward test predictions 之上补上“最小可用的组合评估 / 轻量回测层”；第十轮继续在现有最小组合评估层之上补上了“benchmark / baseline strategy 对比”闭环；第十一轮则继续在这些已有产物之上接入了“最小可用的稳健性 / sensitivity analysis 层”；第十二轮在这些 artifact 之上继续补上了“最小可用的 markdown 研究报告生成层”。
 
-当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层、一个和模型 backtest 同口径的最小 benchmark comparison 层、一个围绕 `top_k / holding_days / cost_bps_per_side` 的小网格稳健性分析层，以及一层直接复用这些 artifacts 的 markdown 研究报告输出。但仍然不包含正式生产级回测和远端训练实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
+当前仓库已经支持从 `yfinance` 获取最基础的美股日线数据，并以 CSV 形式缓存到本地；也支持在这些已缓存日线数据之上生成最小日频特征表、单 symbol 标签表、一个按 `date + symbol` 对齐的 panel dataset、两个回归模型训练闭环、一个 ranking 模型训练闭环、更严格的 walk-forward 时间验证闭环、一个只基于样本外 walk-forward test predictions 的最小组合评估层、一个和模型 backtest 同口径的最小 benchmark comparison 层、一个围绕 `top_k / holding_days / cost_bps_per_side` 的小网格稳健性分析层、一层直接复用这些 artifacts 的 markdown 研究报告输出，以及一套基于 `git push + SSH + uv sync` 的最小远端 WSL GPU 运行工作流。但仍然不包含正式生产级回测和调度部署实现。原因很简单：在量化研究项目里，如果数据层、特征层、标签层和训练验证层都还不稳定，就过早引入更复杂的回测与部署，后续很容易在目录组织、配置管理和测试体验上持续返工。
 
 ## 当前目录说明
 
@@ -57,6 +57,8 @@ cp .env.example .env
 - `DEFAULT_SYMBOLS`
 - `DEFAULT_BENCHMARK_SYMBOL`
 - `DEFAULT_BENCHMARK_MOMENTUM_FEATURE`
+- `XGB_DEVICE`
+- `XGB_RANKER_DEVICE`
 
 ## 运行 CLI
 
@@ -73,6 +75,13 @@ uv run suffering doctor
 ```
 
 `doctor` 会输出当前 Python 版本、项目名、默认数据 provider、默认起始日期、默认 symbols、`.env` 是否存在，以及当前状态说明。
+
+如果你希望本地或远端机器上的 `xgboost` 使用 GPU，可以在 `.env` 中设置：
+
+```bash
+XGB_DEVICE=cuda
+XGB_RANKER_DEVICE=cuda
+```
 
 ## 前四轮已支持的数据层、特征层与 dataset 层
 
@@ -768,9 +777,82 @@ artifacts/reports/research/<model>_research_report.md
 - 更细的滑点 / 冲击成本 / 容量模型
 - LightGBM / CatBoost / 多模型 ranking 对比框架
 - 超参数搜索
-- 远程训练 / GPU / Docker / 数据库 / CI / 调度系统
+- 正式生产级远程训练平台 / Docker / 数据库 / CI / 调度系统
 - 复杂特征预处理 pipeline
 - 实验管理平台
+
+## 本地开发 + 远端 WSL GPU 运行
+
+当前仓库已经沉淀了一套最小但可复用的远端运行流程，核心原则只有两条：
+
+- 本地只通过 `git push` 发布代码，不直接 rsync 仓库文件到远端
+- 远端机器始终从仓库 `git pull` 更新代码，并用 `uv sync` 对齐环境
+
+### 一次性准备
+
+建议先在本地配置一个 SSH alias，例如 `gpu-wsl`：
+
+```sshconfig
+Host gpu-wsl
+    HostName 192.168.31.102
+    Port 34000
+    User kisin
+```
+
+然后在远端机器上只做一次：
+
+```bash
+git clone https://github.com/KisinTheFlame/suffering.git /home/kisin/workspace/suffering
+cd /home/kisin/workspace/suffering
+uv sync --python 3.12 --group gpu
+cat > .env <<'EOF'
+XGB_DEVICE=cuda
+XGB_RANKER_DEVICE=cuda
+EOF
+```
+
+其中 `gpu` 依赖组会安装 `cupy-cuda12x`，用于让 `xgboost` 的 GPU 预测阶段也走显卡，避免 CPU / GPU 设备不匹配告警。
+
+### 日常使用方式
+
+仓库里提供了一个脚本：
+
+```bash
+uv run python scripts/remote_wsl_run.py --ssh-target gpu-wsl --remote-dir /home/kisin/workspace/suffering -- doctor
+```
+
+这个脚本会按顺序执行：
+
+1. 检查本地 git worktree 是否干净
+2. 把当前分支 `git push` 到远端仓库
+3. SSH 到远端目录执行 `git pull --rebase --autostash`
+4. 在远端执行 `uv sync --python 3.12 --group gpu`
+5. 在远端执行 `uv run suffering ...`
+
+例如：
+
+```bash
+uv run python scripts/remote_wsl_run.py \
+  --ssh-target gpu-wsl \
+  --remote-dir /home/kisin/workspace/suffering \
+  -- train-walkforward --model xgb_ranker
+```
+
+如果想在远端跑一个原始脚本，而不是 `suffering` CLI，可以用：
+
+```bash
+uv run python scripts/remote_wsl_run.py \
+  --ssh-target gpu-wsl \
+  --remote-dir /home/kisin/workspace/suffering \
+  --raw-command "uv run python scripts/run_nasdaq100_current_static_pipeline.py"
+```
+
+### 这套流程适合做什么
+
+- 本地修改代码、跑测试、提交 commit
+- 一键把 commit 推到仓库并在远端拉最新代码
+- 在远端 GPU 上跑训练、walk-forward、回测和报告生成
+- 保持“代码版本”和“远端运行结果”之间的对应关系清晰可追踪
 
 ## 运行测试
 
