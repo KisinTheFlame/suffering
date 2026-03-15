@@ -9,3 +9,4 @@ build/
 *.pyc
 artifacts/
 data/
+remote_gpu_wsl.sh
